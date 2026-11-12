@@ -1,0 +1,8 @@
+# per-machine launcher preferences
+settings.json
+
+# runtime logs
+*.log
+
+# local tooling
+.freebuff/
