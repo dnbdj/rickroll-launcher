@@ -389,7 +389,15 @@ class Launcher(tk.Tk):
             return
 
         self.update_info = found
-        if found["version"] > version_tuple(APP_VERSION):
+        current = version_tuple(APP_VERSION)
+        if not current:
+            # Never claim "up to date" when this build cannot say what it is.
+            self.update_state = "error"
+            self.update_button.set_text("Check for updates")
+            self.version_label.configure(text=f"v{APP_VERSION} \u00b7 unknown version", fg=MUTED)
+            self.log(f"This build's version ({APP_VERSION!r}) is not a version number.", "warn")
+            return
+        if found["version"] > current:
             self.update_state = "available"
             self.update_button.set_text(f"Get {found['label']}  \u2192")
             self.version_label.configure(text=f"v{APP_VERSION} \u00b7 {found['label']} available", fg=ACCENT)

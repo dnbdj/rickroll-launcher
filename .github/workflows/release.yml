@@ -24,17 +24,25 @@ jobs:
         with:
           python-version: '3.12'
 
+      # Only a tag carries a version. On a branch push the build keeps the
+      # version in the source, because GITHUB_REF_NAME is just "main".
       - name: Work out the version from the tag
         id: v
         run: |
-          version="${GITHUB_REF_NAME#v}"
-          version="${version%%-*}"
-          if [ -z "$version" ]; then version="1.0.1"; fi
+          version=""
+          case "$GITHUB_REF" in
+            refs/tags/v*) version="${GITHUB_REF_NAME#v}"; version="${version%%-*}" ;;
+          esac
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "packaging version $version"
+          echo "version from tag: '${version:-none, keeping the source version}'"
 
       - name: Build both zips
-        run: python tools/build-release.py . dist --version "${{ steps.v.outputs.version }}" --label "${{ steps.v.outputs.version }}"
+        run: |
+          args=(. dist)
+          if [ -n "${{ steps.v.outputs.version }}" ]; then
+            args+=(--version "${{ steps.v.outputs.version }}" --label "${{ steps.v.outputs.version }}")
+          fi
+          python tools/build-release.py "${args[@]}"
 
       - name: Install a headless Tk for the Mac smoke test
         run: |

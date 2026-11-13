@@ -256,6 +256,10 @@ def main():
     parser.add_argument("--label", default=None)
     args = parser.parse_args()
 
+    if not re.fullmatch(r"\d+(\.\d+)*", args.version):
+        print(f"FAIL: --version must be a dotted number like 1.0.2, got {args.version!r}", file=sys.stderr)
+        return 1
+
     root = pathlib.Path(args.root).resolve()
     out = pathlib.Path(args.out).resolve()
     label = args.label or LABEL
