@@ -19,6 +19,7 @@ Requires Windows 10/11 with the built-in PowerShell 5.1, plus Edge, Chrome or Br
 - **Logs** — timestamped, colour-coded channels (`All`, `App`, `Prank`, `Errors`) with a channel picker
 - **Leaderboard** — local stats from your own runs: how many, best window count, longest session, and the last five, saved in `leaderboard.json`, with a Reset button
 - **Updates** — checks GitHub for the newest release on launch; press the button to fetch, or the arrow for release notes and other options
+- **Settings** — three tabs across the top of one card: **Keybinds** picks the panic hotkey, **General** holds the launch and desktop defaults, **Experimental** has the loop, random-start and dry-run switches
 
 A global panic hotkey (**Ctrl+Alt+Q** by default, configurable in the `...` menu) stops the prank from any desktop, including the ones it created.
 
@@ -30,7 +31,7 @@ The Mac download is a real app bundle: unzip it, double-click **Rickroll Launche
 
 The app is `rickroll_mac_gui.py` on Python 3 + tkinter, wrapped by a small launcher that finds a usable Python and falls back to the terminal version if there isn't one. `rickroll-mac.sh` is that terminal version.
 
-It is the same four-page launcher as Windows — **Prank**, **Logs** (with the All/App/Prank/Errors channels), **Leaderboard** and **Updates** — in a sidebar instead of tabs. Both builds keep that sidebar as an icon rail: symbols only, and the page names slide out over the page you are on while the pointer is over it.
+It is the same five-page launcher as Windows — **Prank**, **Logs** (with the All/App/Prank/Errors channels), **Leaderboard**, **Updates** and **Settings** — in a sidebar instead of tabs. Both builds keep that sidebar as an icon rail: symbols only, and the page names slide out over the page you are on while the pointer is over it.
 
 It carries the same update check as Windows: on launch it asks GitHub for the newest release, shows your version and whether it is newer, and turns the button into a link to that release when one is available. The check runs off the main thread, so a slow or missing network never freezes the window.
 

@@ -23,6 +23,7 @@ import json
 import os
 import pathlib
 import platform
+import random
 import shutil
 import subprocess
 import sys
@@ -33,11 +34,30 @@ import tkinter as tk
 from tkinter import messagebox
 from urllib.request import Request, urlopen
 
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.2.0"
 RELEASES_URL = "https://api.github.com/repos/dnbdj/rickroll-launcher/releases"
 
 # The selftest points this at a temp file so it never touches real stats.
 _STATS_OVERRIDE = {"path": None}
+# The selftest points this at a temp file so it never touches real settings.
+_SETTINGS_OVERRIDE = {"path": None}
+
+DEFAULT_SETTINGS = {
+    "Hotkey": "CommandShiftX",
+    "UpdateOnLaunch": True,
+    "Maximise": True,
+    "LoopVideo": False,
+    "RandomStart": False,
+    "DryRun": False,
+}
+
+# macOS has no global hotkey API, so these only fire while the launcher is focused.
+MAC_HOTKEYS = {
+    "CommandShiftX": ("\u2318\u21e7X", "<Command-Shift-x>"),
+    "ControlAltX": ("\u2303\u2325X", "<Control-Alt-x>"),
+    "Escape": ("Esc", "<Escape>"),
+    "None": ("Off", None),
+}
 VIDEO_URL = "https://www.youtube.com/watch?v=dQw4w9WgXcQ&autoplay=1"
 
 BROWSER_PATHS = [
@@ -80,6 +100,16 @@ def stats_file():
     else:
         base = pathlib.Path.home() / ".rickroll-launcher"
     return base / "leaderboard.json"
+
+
+def settings_file():
+    if _SETTINGS_OVERRIDE["path"]:
+        return pathlib.Path(_SETTINGS_OVERRIDE["path"])
+    if sys.platform == "darwin":
+        base = pathlib.Path.home() / "Library" / "Application Support" / "Rickroll Launcher"
+    else:
+        base = pathlib.Path.home() / ".rickroll-launcher"
+    return base / "settings.json"
 
 
 def format_duration(seconds):
@@ -383,6 +413,9 @@ class Launcher(tk.Tk):
         self.nav_buttons = {}
         self._update_result = None
         self._update_deadline = 0.0
+        self.settings = self._load_settings()
+        self._hotkey_sequence = None
+        self.settings_tab = "Keybinds"
 
         # Retina panels draw at 2x. Without matching tk's scaling the whole
         # window is rasterised at 1x and upscaled, which looks soft.
@@ -398,7 +431,7 @@ class Launcher(tk.Tk):
         self.log("Panic stop: press Force stop. Closing this window also cleans up.", "quiet")
         self.runs = self._load_runs()
         self._render_stats()
-        if auto_check:
+        if auto_check and self.settings.get("UpdateOnLaunch", True):
             self.after(600, lambda: self._check_updates(auto=True))
 
     # ---------------------------------------------------------------- layout
@@ -429,7 +462,7 @@ class Launcher(tk.Tk):
         host.pack(side="top", fill="both", expand=True)
 
         self.pages = {}
-        for key in ("Prank", "Logs", "Leaderboard", "Updates"):
+        for key in ("Prank", "Logs", "Leaderboard", "Updates", "Settings"):
             page = tk.Frame(host, bg=BG)
             page.place(x=0, y=0, relwidth=1, relheight=1)
             self.pages[key] = page
@@ -438,10 +471,12 @@ class Launcher(tk.Tk):
         self._build_logs_page(self.pages["Logs"])
         self._build_board_page(self.pages["Leaderboard"])
         self._build_updates_page(self.pages["Updates"])
+        self._build_settings_page(self.pages["Settings"])
 
         # Built last so the expanding nav draws over the pages, not under them.
         self._build_nav(shell)
         self._show_page("Prank")
+        self._apply_hotkey()
 
     def _build_nav(self, shell):
         self.nav = tk.Frame(shell, bg=SIDEBAR_BG)
@@ -459,7 +494,8 @@ class Launcher(tk.Tk):
         self.brand_sub = tk.Label(brand, text=f"macOS beta {APP_VERSION}", bg=SIDEBAR_BG,
                                   fg=MUTED, font=(FONT, 9), cursor="hand2")
 
-        self.nav_glyphs = {"Prank": "\u25b6", "Logs": "\u2261", "Leaderboard": "\u2605", "Updates": "\u21bb"}
+        self.nav_glyphs = {"Prank": "\u25b6", "Logs": "\u2261", "Leaderboard": "\u2605", "Updates": "\u21bb",
+                           "Settings": "\u2699"}
         self.nav_buttons = {}
         for key, glyph in self.nav_glyphs.items():
             button = FlatButton(self.nav, glyph, lambda name=key: self._nav_click(name),
@@ -696,6 +732,163 @@ class Launcher(tk.Tk):
         self.update_notes = tk.Label(page, text="Asks api.github.com for the newest release, prereleases included.",
                                      bg=BG, fg=MUTED, font=(FONT, 9), justify="left", anchor="nw", wraplength=520)
         self.update_notes.pack(fill="both", expand=True, padx=20, pady=(4, 12), anchor="w")
+
+    # --------------------------------------------------------------- settings
+
+    def _load_settings(self):
+        merged = dict(DEFAULT_SETTINGS)
+        try:
+            data = json.loads(settings_file().read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                for key, value in data.items():
+                    if key in merged and isinstance(value, type(merged[key])):
+                        merged[key] = value
+        except (OSError, ValueError):
+            pass
+        return merged
+
+    def _save_settings(self):
+        path = settings_file()
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(self.settings, indent=2), encoding="utf-8")
+        except OSError as exc:
+            self.log(f"Could not save settings: {exc}", "warn")
+
+    def _toggle_option(self, key):
+        self.settings[key] = not bool(self.settings.get(key))
+        self._save_settings()
+        self._paint_settings()
+        self.log(f"{key}: {'on' if self.settings[key] else 'off'}", "quiet")
+
+    def _set_hotkey(self, name):
+        self.settings["Hotkey"] = name
+        self._save_settings()
+        self._apply_hotkey()
+        self._paint_settings()
+        label = MAC_HOTKEYS.get(name, ("Off", None))[0]
+        self.log(f"Force stop key: {label}", "quiet")
+
+    def _apply_hotkey(self):
+        if self._hotkey_sequence:
+            try:
+                self.unbind(self._hotkey_sequence)
+            except tk.TclError:
+                pass
+            self._hotkey_sequence = None
+        _label, sequence = MAC_HOTKEYS.get(self.settings.get("Hotkey", "None"), MAC_HOTKEYS["None"])
+        if sequence:
+            self._hotkey_sequence = sequence
+            self.bind(sequence, lambda _event: self._force_stop())
+
+    def _video_url(self):
+        url = VIDEO_URL
+        if self.settings.get("LoopVideo"):
+            url += "&loop=1&playlist=dQw4w9WgXcQ"
+        if self.settings.get("RandomStart"):
+            url += f"&t={random.randint(0, 170)}"
+        return url
+
+    def _build_settings_page(self, page):
+        header = tk.Frame(page, bg=BG)
+        header.pack(fill="x", padx=18, pady=(16, 8))
+        tk.Label(header, text="Settings", bg=BG, fg=TEXT, font=(FONT, 16, "bold")).pack(side="left")
+        tk.Label(header, text="  keybinds, defaults, experiments", bg=BG, fg=MUTED,
+                 font=(FONT, 10)).pack(side="left", pady=(4, 0))
+
+        card = tk.Frame(page, bg=CARD, highlightbackground=STROKE, highlightthickness=1)
+        card.pack(fill="both", expand=True, padx=18, pady=(2, 12))
+
+        strip = tk.Frame(card, bg=CARD)
+        strip.pack(fill="x", padx=14, pady=(12, 0))
+        self.settings_tabs = {}
+        for name in ("Keybinds", "General", "Experimental"):
+            chip = FlatButton(strip, name, lambda chosen=name: self._set_settings_tab(chosen),
+                              INNER, STROKE, STROKE, MUTED, (FONT, 10), padx=14, pady=6)
+            chip.pack(side="left", padx=(0, 6))
+            self.settings_tabs[name] = chip
+
+        tk.Frame(card, bg=STROKE, height=1).pack(fill="x", padx=14, pady=(10, 0))
+
+        body = tk.Frame(card, bg=CARD)
+        body.pack(fill="both", expand=True, padx=16, pady=(14, 12))
+        self.settings_panes = {}
+        for name in ("Keybinds", "General", "Experimental"):
+            pane = tk.Frame(body, bg=CARD)
+            pane.place(x=0, y=0, relwidth=1, relheight=1)
+            self.settings_panes[name] = pane
+
+        self.hotkey_buttons = {}
+        keybinds = self.settings_panes["Keybinds"]
+        tk.Label(keybinds, text="FORCE STOP KEY", bg=CARD, fg=MUTED, font=(FONT, 8)).pack(anchor="w")
+        tk.Label(keybinds,
+                 text="Stops the prank while the launcher window has focus. macOS has no global "
+                      "hotkey API, so from anywhere use Force Stop.command next to the app.",
+                 bg=CARD, fg=MUTED, font=(FONT, 9), justify="left",
+                 wraplength=520).pack(anchor="w", pady=(2, 10))
+        chips = tk.Frame(keybinds, bg=CARD)
+        chips.pack(anchor="w")
+        for name in MAC_HOTKEYS:
+            label = MAC_HOTKEYS[name][0]
+            chip = FlatButton(chips, label, lambda chosen=name: self._set_hotkey(chosen),
+                              INNER, STROKE, STROKE, MUTED, (FONT, 11), padx=16, pady=7)
+            chip.pack(side="left", padx=(0, 8))
+            self.hotkey_buttons[name] = chip
+
+        self.option_buttons = {}
+        general = self.settings_panes["General"]
+        self._toggle_row(general, "UpdateOnLaunch", "Check for updates on launch",
+                         "Asks GitHub for the newest release when the launcher opens.")
+        self._toggle_row(general, "Maximise", "Open prank windows maximised",
+                         "Full screen the browser window in each Space; off leaves them windowed.")
+
+        experimental = self.settings_panes["Experimental"]
+        self._toggle_row(experimental, "LoopVideo", "Loop the video",
+                         "Adds loop=1 so the song never stops between windows.")
+        self._toggle_row(experimental, "RandomStart", "Start at a random point",
+                         "Jumps to a different moment each run, so the windows disagree with each other.")
+        self._toggle_row(experimental, "DryRun", "Dry run",
+                         "Log the plan and open nothing, for trying settings without a prank.")
+
+        self._set_settings_tab("Keybinds")
+        self._paint_settings()
+
+    def _toggle_row(self, parent, key, title, blurb):
+        row = tk.Frame(parent, bg=CARD)
+        row.pack(fill="x", pady=(0, 14))
+        text = tk.Frame(row, bg=CARD)
+        text.pack(side="left", fill="x", expand=True)
+        tk.Label(text, text=title, bg=CARD, fg=TEXT, font=(FONT, 11)).pack(anchor="w")
+        tk.Label(text, text=blurb, bg=CARD, fg=MUTED, font=(FONT, 9), justify="left",
+                 wraplength=430).pack(anchor="w", pady=(1, 0))
+        button = FlatButton(row, "Off", lambda target=key: self._toggle_option(target),
+                            INNER, STROKE, STROKE, MUTED, (FONT, 10, "bold"), padx=16, pady=7)
+        button.pack(side="right", padx=(12, 0))
+        self.option_buttons[key] = button
+
+    def _set_settings_tab(self, name):
+        self.settings_tab = name
+        pane = self.settings_panes.get(name)
+        if pane is not None:
+            pane.tkraise()
+        for key, chip in self.settings_tabs.items():
+            active = key == name
+            chip.set_colors(STROKE if active else INNER, STROKE, STROKE, ACCENT if active else MUTED)
+            chip.set_enabled(True)
+
+    def _paint_settings(self):
+        for name, button in self.hotkey_buttons.items():
+            active = (name == self.settings.get("Hotkey"))
+            button.set_colors(STROKE if active else INNER, STROKE, STROKE, ACCENT if active else MUTED)
+            button.set_enabled(True)
+        for key, button in self.option_buttons.items():
+            on = bool(self.settings.get(key))
+            button.set_text("On" if on else "Off")
+            if on:
+                button.set_colors(ACCENT, ACCENT_HI, ACCENT_LO, "#FFFFFF")
+            else:
+                button.set_colors(INNER, STROKE, STROKE, MUTED)
+            button.set_enabled(True)
 
     # ------------------------------------------------------------------ log
 
@@ -954,6 +1147,12 @@ class Launcher(tk.Tk):
         if self.running:
             return
 
+        if self.settings.get("DryRun"):
+            planned = self.windows_stepper.get()
+            self.log(f"Dry run: would open {planned} window(s) on this Space. Nothing was opened.", "ok")
+            self._set_status("Dry run", ACCENT)
+            return
+
         browser = self._find_browser()
         if browser is None:
             self.log("No Chromium browser found (Chrome, Brave, Edge or Chromium). Install one first.", "err")
@@ -990,11 +1189,12 @@ class Launcher(tk.Tk):
             f"--user-data-dir={self.profile_dir}",
             "--no-first-run",
             "--no-default-browser-check",
-            "--start-maximized",
             "--disable-sync",
             "--autoplay-policy=no-user-gesture-required",
-            VIDEO_URL,
+            self._video_url(),
         ]
+        if self.settings.get("Maximise", True):
+            args.insert(1, "--start-maximized")
         try:
             proc = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             self.procs.append(proc)
@@ -1085,6 +1285,7 @@ class Launcher(tk.Tk):
 
 
 def selftest():
+    _SETTINGS_OVERRIDE["path"] = os.path.join(tempfile.gettempdir(), "rickroll-selftest-settings.json")
     app = Launcher(auto_check=False)
     app.update_idletasks()
     app.update()
@@ -1110,6 +1311,22 @@ def selftest():
     icons = [button._label.cget("text") for button in app.nav_buttons.values()]
     print(f"selftest: nav rail overlay={app.nav.winfo_manager() == 'place'} collapsed={narrow} expanded={wide} "
           f"icons={icons} words={words}")
+
+    app._show_page("Settings")
+    app._set_settings_tab("Experimental")
+    app.update()
+    before = app.settings["DryRun"]
+    app._toggle_option("DryRun")
+    toggled = app.settings["DryRun"]
+    stored = json.loads(settings_file().read_text(encoding="utf-8"))["DryRun"]
+    app._toggle_option("DryRun")
+    app.settings["LoopVideo"] = True
+    loop_url = app._video_url()
+    app.settings["LoopVideo"] = False
+    app._set_hotkey("Escape")
+    print(f"selftest: settings tabs {sorted(app.settings_tabs)} panes {sorted(app.settings_panes)} "
+          f"tab={app.settings_tab} dryRun {before}->{toggled} stored={stored} "
+          f"loopUrl={loop_url.endswith('&loop=1&playlist=dQw4w9WgXcQ')} hotkey={app._hotkey_sequence}")
 
     app.log("selftest app line", "info", "App")
     app.log("selftest prank line", "info", "Prank")

@@ -115,7 +115,7 @@ $script:G = @{
     Caret  = [string][char]0x25BE
 }
 
-$script:AppVersion = '1.1.0'
+$script:AppVersion = '1.2.0'
 
 # -------------------------------------------------------------------- widgets
 
@@ -277,6 +277,10 @@ $script:SettingsPath = Join-Path $PSScriptRoot 'settings.json'
 $script:Opts = @{
     Windows      = 8
     Desktops     = 3
+    LoopVideo      = $false
+    RandomStart    = $false
+    DryRun         = $false
+    UpdateOnLaunch = $true
     Hotkey       = 'Ctrl+Alt+Q'
     KeepDesktops = $false
     UpdateUrl    = 'https://api.github.com/repos/dnbdj/rickroll-launcher/releases'
@@ -322,7 +326,7 @@ function Import-Settings {
     if (-not (Test-Path -LiteralPath $script:SettingsPath)) { return }
     try {
         $saved = Get-Content -Raw -LiteralPath $script:SettingsPath | ConvertFrom-Json
-        foreach ($key in @('Windows', 'Desktops', 'Hotkey', 'KeepDesktops', 'UpdateUrl')) {
+        foreach ($key in @('Windows', 'Desktops', 'Hotkey', 'KeepDesktops', 'UpdateUrl', 'LoopVideo', 'RandomStart', 'DryRun', 'UpdateOnLaunch')) {
             if ($saved.PSObject.Properties.Name -contains $key) { $script:Opts[$key] = $saved.$key }
         }
     }
@@ -598,7 +602,8 @@ $navItems = @(
     @{ Key = 'Prank'; Glyph = $script:G.Play },
     @{ Key = 'Logs'; Glyph = [string][char]0x2261 },
     @{ Key = 'Leaderboard'; Glyph = [string][char]0x2605 },
-    @{ Key = 'Updates'; Glyph = [string][char]0x21BB }
+    @{ Key = 'Updates'; Glyph = [string][char]0x21BB },
+    @{ Key = 'Settings'; Glyph = [string][char]0x2699 }
 )
 
 $navIndex = 0
@@ -982,6 +987,148 @@ $updateHint = New-Label -Text 'Update source: put "UpdateUrl" in settings.json -
 $updateHint.Anchor = 'Top,Left,Right'
 $updateCard.Controls.Add($updateHint)
 
+
+# --- Settings page ---
+
+$settingsPage = New-Page -Key 'Settings'
+
+$settingsCard = New-Card -X 16 -Y 16 -W 700 -H 506
+$settingsCard.Anchor = 'Top,Bottom,Left,Right'
+$settingsPage.Controls.Add($settingsCard)
+$settingsCard.Controls.Add((New-Label -Text 'Settings' -X 18 -Y 14 -W 80 -H 26 -Size 10.5 -Style Semibold -Back $script:Palette.Card))
+$settingsCard.Controls.Add((New-Label -Text 'keybinds, defaults, experiments' -X 104 -Y 20 -W 320 -H 18 -Size 8 -Color $script:Palette.Muted -Back $script:Palette.Card))
+
+$script:UI.SettingsTabs = @{}
+$script:UI.SettingsPanes = @{}
+$script:UI.HotkeyChips = @{}
+$script:UI.ToggleChips = @{}
+$script:UI.SettingsTab = 'Keybinds'
+
+$settingsTabNames = @('Keybinds', 'General', 'Experimental')
+$tabX = 18
+foreach ($tabName in $settingsTabNames) {
+    $tabWidth = if ($tabName -eq 'Experimental') { 118 } else { 96 }
+    $tab = New-RoundButton -Text $tabName -X $tabX -Y 46 -W $tabWidth -H 30 -Radius 9 -Fill $script:Palette.Card -Hover $script:Palette.Stroke -Press $script:Palette.Stroke -TextColor $script:Palette.Muted -Size 9
+    $tab.Tag = $tabName
+    $tab.add_Click({
+        param($sender, $e)
+        Set-SettingsTab -Name ([string]$sender.Tag)
+    })
+    $settingsCard.Controls.Add($tab)
+    $script:UI.SettingsTabs[$tabName] = $tab
+    $tabX += $tabWidth + 8
+}
+
+$settingsDivider = New-Card -X 18 -Y 84 -W 664 -H 1 -Radius 0 -Fill $script:Palette.Stroke -Border ''
+$settingsDivider.Anchor = 'Top,Left,Right'
+$settingsCard.Controls.Add($settingsDivider)
+
+foreach ($tabName in $settingsTabNames) {
+    $pane = New-Object System.Windows.Forms.Panel
+    $pane.Bounds = [System.Drawing.Rectangle]::new((U 18), (U 96), (U 664), (U 388))
+    $pane.Anchor = 'Top,Bottom,Left,Right'
+    $pane.BackColor = ToColor $script:Palette.Card
+    $pane.Visible = $false
+    $settingsCard.Controls.Add($pane)
+    $script:UI.SettingsPanes[$tabName] = $pane
+}
+
+# keybinds
+$keyPane = $script:UI.SettingsPanes['Keybinds']
+$keyPane.Controls.Add((New-Label -Text 'PANIC HOTKEY' -X 2 -Y 4 -W 300 -H 16 -Size 7 -Color $script:Palette.Muted -Back $script:Palette.Card))
+$keyPane.Controls.Add((New-Label -Text 'Registers with Windows, so it works from any desktop, including the ones the prank creates.' -X 2 -Y 22 -W 640 -H 18 -Size 9 -Color '#BFC4D6' -Back $script:Palette.Card))
+
+$chipX = 2
+foreach ($name in $script:HotkeyMap.Keys) {
+    $chipWidth = if ($name -eq 'Ctrl+Shift+Alt+Q') { 150 } else { 112 }
+    $chip = New-RoundButton -Text $name -X $chipX -Y 54 -W $chipWidth -H 34 -Radius 9 -Fill $script:Palette.Card -Hover $script:Palette.Stroke -Press $script:Palette.Stroke -TextColor $script:Palette.Muted -Size 9
+    $chip.Tag = $name
+    $chip.add_Click({
+        param($sender, $e)
+        Set-Hotkey -Name ([string]$sender.Tag)
+    })
+    $keyPane.Controls.Add($chip)
+    $script:UI.HotkeyChips[$name] = $chip
+    $chipX += $chipWidth + 8
+}
+
+$keyPane.Controls.Add((New-Label -Text 'Set it to None if another app owns the combination.' -X 2 -Y 104 -W 640 -H 18 -Size 8 -Color $script:Palette.Muted -Back $script:Palette.Card))
+
+# general + experimental share the same toggle row layout
+function New-SettingsToggle {
+    param($Pane, [string]$Key, [string]$Title, [string]$Blurb, [double]$Y)
+
+    $Pane.Controls.Add((New-Label -Text $Title -X 2 -Y $Y -W 520 -H 20 -Size 10 -Style Semibold -Color $script:Palette.Text -Back $script:Palette.Card))
+    $Pane.Controls.Add((New-Label -Text $Blurb -X 2 -Y ($Y + 22) -W 520 -H 18 -Size 8 -Color $script:Palette.Muted -Back $script:Palette.Card))
+
+    $chip = New-RoundButton -Text 'Off' -X 552 -Y ($Y + 6) -W 96 -H 32 -Radius 9 -Fill $script:Palette.Inner -Hover $script:Palette.Hover -Press $script:Palette.Hover -TextColor $script:Palette.Muted -Size 9 -Style Semibold
+    $chip.Tag = $Key
+    $chip.add_Click({
+        param($sender, $e)
+        Set-OptionToggle -Key ([string]$sender.Tag)
+    })
+    $Pane.Controls.Add($chip)
+    $script:UI.ToggleChips[$Key] = $chip
+}
+
+$generalPane = $script:UI.SettingsPanes['General']
+New-SettingsToggle -Pane $generalPane -Key 'UpdateOnLaunch' -Title 'Check for updates on launch' -Blurb 'Asks GitHub for the newest release when the launcher opens.' -Y 4
+New-SettingsToggle -Pane $generalPane -Key 'KeepDesktops' -Title 'Keep desktops after stop' -Blurb 'Leave the extra virtual desktops behind instead of closing them.' -Y 76
+
+$experimentalPane = $script:UI.SettingsPanes['Experimental']
+New-SettingsToggle -Pane $experimentalPane -Key 'LoopVideo' -Title 'Loop the video' -Blurb 'Adds loop=1 so the song never stops between windows.' -Y 4
+New-SettingsToggle -Pane $experimentalPane -Key 'RandomStart' -Title 'Start at a random point' -Blurb 'Jumps to a different moment each run, so the windows disagree.' -Y 76
+New-SettingsToggle -Pane $experimentalPane -Key 'DryRun' -Title 'Dry run' -Blurb 'Log the plan and open nothing, for trying settings without a prank.' -Y 148
+
+function Set-SettingsTab {
+    param([string]$Name)
+    if (-not $script:UI.SettingsPanes.ContainsKey($Name)) { return }
+    $script:UI.SettingsTab = $Name
+    foreach ($key in @($script:UI.SettingsPanes.Keys)) {
+        $script:UI.SettingsPanes[$key].Visible = ($key -eq $Name)
+    }
+    foreach ($key in @($script:UI.SettingsTabs.Keys)) {
+        $active = ($key -eq $Name)
+        $tab = $script:UI.SettingsTabs[$key]
+        $tab.FillColor = ToColor $(if ($active) { $script:Palette.Inner } else { $script:Palette.Card })
+        $tab.ForeColor = ToColor $(if ($active) { $script:Palette.Accent } else { $script:Palette.Muted })
+        $tab.Invalidate()
+    }
+}
+
+function Update-SettingsPage {
+    foreach ($name in @($script:UI.HotkeyChips.Keys)) {
+        $active = ($script:Opts.Hotkey -eq $name)
+        $chip = $script:UI.HotkeyChips[$name]
+        $chip.FillColor = ToColor $(if ($active) { $script:Palette.Inner } else { $script:Palette.Card })
+        $chip.ForeColor = ToColor $(if ($active) { $script:Palette.Accent } else { $script:Palette.Muted })
+        $chip.Invalidate()
+    }
+    foreach ($key in @($script:UI.ToggleChips.Keys)) {
+        $on = [bool]$script:Opts[$key]
+        $chip = $script:UI.ToggleChips[$key]
+        $chip.Text = if ($on) { 'On' } else { 'Off' }
+        $chip.FillColor = ToColor $(if ($on) { $script:Palette.Accent } else { $script:Palette.Inner })
+        $chip.HoverFill = ToColor $(if ($on) { $script:Palette.AccentHi } else { $script:Palette.Hover })
+        $chip.PressFill = ToColor $(if ($on) { $script:Palette.AccentLo } else { $script:Palette.Hover })
+        $chip.ForeColor = ToColor $(if ($on) { '#FFFFFF' } else { $script:Palette.Muted })
+        $chip.Invalidate()
+    }
+}
+
+function Set-OptionToggle {
+    param([string]$Key)
+    if (-not $script:Opts.ContainsKey($Key)) { return }
+    $script:Opts[$Key] = -not [bool]$script:Opts[$Key]
+    Save-Settings
+    Update-SettingsPage
+    $state = if ($script:Opts[$Key]) { 'on' } else { 'off' }
+    Add-Log ("{0}: {1}" -f $Key, $state) 'quiet' 'App'
+}
+
+Set-SettingsTab -Name 'Keybinds'
+Update-SettingsPage
+
 # every page is laid out at its real size before the first one is picked
 $contentHost.PerformLayout()
 
@@ -1069,7 +1216,7 @@ function Set-UiRunning {
 }
 
 function Update-PlanInfo {
-    $plan = New-RickrollPlan -Windows $script:Opts.Windows -Desktops $script:Opts.Desktops -DelayMs 800
+    $plan = New-RickrollPlan -Windows $script:Opts.Windows -Desktops $script:Opts.Desktops -DelayMs 800 -Url (Get-PrankUrl)
     if ($plan.NewDesktops -gt 0) {
         $script:UI.PlanValue.Text = ("{0} windows across {1} desktops ({2} new)" -f $plan.Windows, $plan.TotalDesktops, $plan.NewDesktops)
     }
@@ -1138,10 +1285,16 @@ $script:LogHandler = {
 function Start-Prank {
     if ($script:State.Running) { return }
 
-    $plan = New-RickrollPlan -Windows $script:Opts.Windows -Desktops $script:Opts.Desktops -DelayMs 800
+    $plan = New-RickrollPlan -Windows $script:Opts.Windows -Desktops $script:Opts.Desktops -DelayMs 800 -Url (Get-PrankUrl)
     $steps = @(Get-RickrollStep -Plan $plan)
     if ($steps.Count -eq 0) {
         Add-Log 'Nothing to do - raise the window count first.' 'warn'
+        return
+    }
+
+    if ($script:Opts.DryRun) {
+        Add-Log ("Dry run: would open {0} window(s) across {1} desktop(s) - nothing was opened." -f $plan.Windows, $plan.TotalDesktops) 'ok' 'Prank'
+        Set-Status 'Dry run' $script:Palette.Accent
         return
     }
 
@@ -1292,12 +1445,21 @@ function Register-PanicHotkey {
     Update-PlanInfo
 }
 
+function Get-PrankUrl {
+    $url = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ&autoplay=1'
+    if ($script:Opts.LoopVideo) { $url += '&loop=1&playlist=dQw4w9WgXcQ' }
+    if ($script:Opts.RandomStart) { $url += ('&t={0}' -f (Get-Random -Minimum 0 -Maximum 170)) }
+    return $url
+}
+
 function Set-Hotkey {
     param([string]$Name)
     if (-not $script:HotkeyMap.Contains($Name)) { return }
     $script:Opts.Hotkey = $Name
     Save-Settings
     Register-PanicHotkey
+    Update-SettingsPage
+    Add-Log ("Panic hotkey: {0}" -f $Name) 'quiet' 'App'
 }
 
 # ------------------------------------------------------------- "..." menu
@@ -1360,7 +1522,7 @@ function New-SettingsMenu {
 
     [void]$menu.Items.Add((New-MenuItem -Text 'About' -OnClick {
         [void][System.Windows.Forms.MessageBox]::Show(
-            "Rickroll Launcher $($script:AppVersion)`r`n`r`nTabs: Prank, Logs, Leaderboard, Updates.`r`nThe panic hotkey works from any desktop.`r`n`r`nStop cleanup closes the prank browser windows and the desktops it created.",
+            "Rickroll Launcher $($script:AppVersion)`r`n`r`nTabs: Prank, Logs, Leaderboard, Updates, Settings.`r`nThe panic hotkey works from any desktop.`r`n`r`nStop cleanup closes the prank browser windows and the desktops it created.",
             'About', [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information)
     }))
 
@@ -1720,7 +1882,9 @@ $form.add_Shown({
     Add-Log 'Launcher ready.' 'quiet' 'App'
     Add-Log ("Prank profile: {0}" -f (Get-RickrollProfileDir)) 'quiet' 'App'
     Set-Status 'Idle'
-    try { Start-UpdateCheck } catch { Add-Log ("Update check error: {0}" -f $_.Exception.Message) 'warn' 'App' }
+    if ($script:Opts.UpdateOnLaunch) {
+        try { Start-UpdateCheck } catch { Add-Log ("Update check error: {0}" -f $_.Exception.Message) 'warn' 'App' }
+    }
 })
 
 $form.add_FormClosing({
@@ -1772,6 +1936,22 @@ if ($SelfTest) {
     [System.Windows.Forms.Application]::DoEvents()
     $script:NavWatch.Start()
     Write-Host ("SelfTest: nav rail collapsed={0} mid={1} expanded={2} icons='{3}' words='{4}' overlapsPage={5}" -f $railNarrow, $railMid, $railWide, $iconText, $wordText, $railOverPage)
+
+    Show-Page -Key 'Settings'
+    Set-SettingsTab -Name 'Experimental'
+    [System.Windows.Forms.Application]::DoEvents()
+    $dryBefore = $script:Opts.DryRun
+    Set-OptionToggle -Key 'DryRun'
+    $dryAfter = $script:Opts.DryRun
+    Set-OptionToggle -Key 'DryRun'
+    $script:Opts.LoopVideo = $true
+    Update-SettingsPage
+    $loopUrl = Get-PrankUrl
+    $script:Opts.LoopVideo = $false
+    Update-SettingsPage
+    $tabsVisible = 0
+    foreach ($name in @($script:UI.SettingsPanes.Keys)) { if ($script:UI.SettingsPanes[$name].Visible) { $tabsVisible++ } }
+    Write-Host ("SelfTest: settings tabs={0} panes={1} visiblePanes={2} activeTab={3} dryRun {4}->{5} loopUrlEnds={6}" -f $script:UI.SettingsTabs.Count, $script:UI.SettingsPanes.Count, $tabsVisible, $script:UI.SettingsTab, $dryBefore, $dryAfter, $loopUrl.EndsWith('&loop=1&playlist=dQw4w9WgXcQ'))
 
     Show-Page -Key 'Logs'
     [System.Windows.Forms.Application]::DoEvents()

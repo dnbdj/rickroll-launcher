@@ -21,8 +21,8 @@ import re
 import sys
 import zipfile
 
-VERSION = "1.1.0"
-LABEL = "1.1.0"
+VERSION = "1.2.0"
+LABEL = "1.2.0"
 
 WINDOWS_FILES = [
     "Launcher.ps1",
