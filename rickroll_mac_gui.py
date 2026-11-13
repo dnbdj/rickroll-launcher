@@ -33,7 +33,7 @@ import tkinter as tk
 from tkinter import messagebox
 from urllib.request import Request, urlopen
 
-APP_VERSION = "1.0.9"
+APP_VERSION = "1.1.0"
 RELEASES_URL = "https://api.github.com/repos/dnbdj/rickroll-launcher/releases"
 
 # The selftest points this at a temp file so it never touches real stats.
@@ -248,6 +248,15 @@ def diagnose():
     return 0
 
 
+def ease_out_back(t):
+    """Fast start, slight overshoot on arrival: the springy feel, in maths."""
+    if t >= 1:
+        return 1.0
+    c1 = 1.70158
+    c3 = c1 + 1
+    return 1 + c3 * (t - 1) ** 3 + c1 * (t - 1) ** 2
+
+
 class FlatButton(tk.Frame):
     """A flat, dark button. tk.Button ignores colours on macOS, a Label does not."""
 
@@ -375,6 +384,13 @@ class Launcher(tk.Tk):
         self._update_result = None
         self._update_deadline = 0.0
 
+        # Retina panels draw at 2x. Without matching tk's scaling the whole
+        # window is rasterised at 1x and upscaled, which looks soft.
+        try:
+            self.tk.call("tk", "scaling", max(1.0, self.winfo_fpixels("1i") / 72.0))
+        except tk.TclError:
+            pass
+
         self._build_ui()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self.log("Launcher ready.", "quiet")
@@ -432,6 +448,8 @@ class Launcher(tk.Tk):
         self.nav.place(x=0, y=0, width=RAIL_WIDTH, relheight=1)
         self.nav_expanded = False
         self._nav_job = None
+        self._nav_anim_job = None
+        self._nav_finish = None
 
         brand = tk.Frame(self.nav, bg=SIDEBAR_BG)
         brand.pack(fill="x", padx=14, pady=(18, 10))
@@ -486,7 +504,7 @@ class Launcher(tk.Tk):
             self.after_cancel(self._nav_job)
         # Tk fires <Leave> when the pointer moves between the rail and its own
         # buttons, so ask where the pointer actually is before collapsing.
-        self._nav_job = self.after(130, self._nav_settle)
+        self._nav_job = self.after(80, self._nav_settle)
 
     def _nav_settle(self):
         self._nav_job = None
@@ -501,13 +519,29 @@ class Launcher(tk.Tk):
             widget = widget.master
         return False
 
-    def _set_nav(self, expanded):
+    def _set_nav(self, expanded, animate=True):
         expanded = bool(expanded)
         if expanded == self.nav_expanded:
             return
         self.nav_expanded = expanded
-        self.nav.place_configure(width=NAV_WIDTH if expanded else RAIL_WIDTH)
-        self.nav.lift()
+
+        if expanded:
+            self._label_nav(True)
+            self._nav_finish = None
+        else:
+            # Let the words stay put while the rail narrows, then swap to glyphs.
+            self._nav_finish = lambda: self._label_nav(False)
+
+        if animate:
+            self._animate_nav()
+        else:
+            self.nav.place_configure(width=NAV_WIDTH if expanded else RAIL_WIDTH)
+            self.nav.lift()
+            if self._nav_finish:
+                finish, self._nav_finish = self._nav_finish, None
+                finish()
+
+    def _label_nav(self, expanded):
         for key, button in self.nav_buttons.items():
             button.set_text(f"{self.nav_glyphs[key]}  {key}" if expanded else self.nav_glyphs[key])
             button._label.configure(anchor="w" if expanded else "center")
@@ -517,6 +551,32 @@ class Launcher(tk.Tk):
             self.brand_sub.pack(anchor="w")
         else:
             self.brand_sub.pack_forget()
+
+    def _animate_nav(self):
+        if self._nav_anim_job is not None:
+            self.after_cancel(self._nav_anim_job)
+            self._nav_anim_job = None
+        start = self.nav.winfo_width() or RAIL_WIDTH
+        target = NAV_WIDTH if self.nav_expanded else RAIL_WIDTH
+        begin = time.time()
+        duration = 170.0
+
+        def step():
+            t = min(1.0, (time.time() - begin) * 1000.0 / duration)
+            width = int(round(start + (target - start) * ease_out_back(t)))
+            self.nav.place_configure(width=max(8, width))
+            self.nav.lift()
+            if t < 1.0:
+                self._nav_anim_job = self.after(12, step)
+            else:
+                self.nav.place_configure(width=target)
+                self._nav_anim_job = None
+                finish = self._nav_finish
+                self._nav_finish = None
+                if finish:
+                    finish()
+
+        step()
 
     def _build_prank_page(self, page):
         header = tk.Frame(page, bg=BG)
@@ -1040,11 +1100,11 @@ def selftest():
         app._show_page(page)
     print(f"selftest: pages {sorted(app.pages)} nav {sorted(app.nav_buttons)} current={app.current_page}")
 
-    app._set_nav(True)
+    app._set_nav(True, animate=False)
     app.update()
     wide = app.nav.winfo_width()
     words = [button._label.cget("text") for button in app.nav_buttons.values()]
-    app._set_nav(False)
+    app._set_nav(False, animate=False)
     app.update()
     narrow = app.nav.winfo_width()
     icons = [button._label.cget("text") for button in app.nav_buttons.values()]

@@ -39,6 +39,27 @@ trap {
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
+# Windows only lets a process draw at its panel's real resolution once it says
+# it is DPI aware; without this the whole window is bitmap-stretched at 125%,
+# which is what made the text look pixelated.
+if (-not ('Rickroll.Dpi' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+namespace Rickroll {
+    public static class Dpi {
+        [DllImport("user32.dll")] private static extern bool SetProcessDpiAwarenessContext(IntPtr value);
+        [DllImport("user32.dll")] private static extern bool SetProcessDPIAware();
+        public static void Enable() {
+            try { if (SetProcessDpiAwarenessContext(new IntPtr(-4))) { return; } } catch { }
+            try { SetProcessDPIAware(); } catch { }
+        }
+    }
+}
+'@ -ErrorAction SilentlyContinue
+}
+try { [Rickroll.Dpi]::Enable() } catch { }
+
 [System.Windows.Forms.Application]::EnableVisualStyles()
 
 . (Join-Path $PSScriptRoot 'Rickroll.UI.ps1')
@@ -94,7 +115,7 @@ $script:G = @{
     Caret  = [string][char]0x25BE
 }
 
-$script:AppVersion = '1.0.9'
+$script:AppVersion = '1.1.0'
 
 # -------------------------------------------------------------------- widgets
 
@@ -631,37 +652,70 @@ function Test-NavHover {
     return $rect.Contains($point)
 }
 
+$script:NavAfter = $null
+$script:NavAnimator = New-Object Rickroll.UI.Animator($sidebar, 'Width')
+$script:NavAnimator.Completed = [Action]{
+    if ($script:NavAfter) {
+        $after = $script:NavAfter
+        $script:NavAfter = $null
+        & $after
+    }
+}
+$script:BarAnimator = New-Object Rickroll.UI.Animator($script:UI.NavBar, 'Top')
+
+function Move-NavRail {
+    param([int]$To, [int]$Duration = 190)
+    if (-not $script:UiAlive) { return }
+    $script:NavAnimator.To($To, $Duration)
+}
+
+function Move-NavBar {
+    param([int]$To, [int]$Duration = 180)
+    if (-not $script:UiAlive -or $null -eq $script:UI.NavBar) { return }
+    $script:BarAnimator.To($To, $Duration)
+}
+
+function Set-NavLabels {
+    param([bool]$Expanded)
+    $inset = if ($Expanded) { (U 14) } else { (U 10) }
+    $buttonWidth = if ($Expanded) { (U 148) } else { (U 44) }
+    foreach ($key in @($script:UI.NavButtons.Keys)) {
+        $button = $script:UI.NavButtons[$key]
+        $glyph = $script:UI.NavGlyphs[$key]
+        $button.Text = if ($Expanded) { ("{0}  {1}" -f $glyph, $key) } else { $glyph }
+        $button.Bounds = [System.Drawing.Rectangle]::new($inset, $button.Top, $buttonWidth, $button.Height)
+        $button.Invalidate()
+    }
+    $menuButton.Left = $inset
+    $menuButton.Width = $buttonWidth
+    $sidebarVersion.Left = $inset
+    $sidebarVersion.Width = $buttonWidth
+    $script:UI.NavBar.Left = if ($Expanded) { (U 5) } else { (U 4) }
+}
+
 function Set-NavExpanded {
     param([switch]$On)
     if (-not $script:UiAlive) { return }
     if ([bool]$On -eq $script:NavExpanded) { return }
     $script:NavExpanded = [bool]$On
 
-    $inset = if ($On) { (U 14) } else { (U 10) }
-    $buttonWidth = if ($On) { (U 148) } else { (U 44) }
-    foreach ($key in @($script:UI.NavButtons.Keys)) {
-        $button = $script:UI.NavButtons[$key]
-        $glyph = $script:UI.NavGlyphs[$key]
-        $button.Text = if ($On) { ("{0}  {1}" -f $glyph, $key) } else { $glyph }
-        $button.Bounds = [System.Drawing.Rectangle]::new($inset, $button.Top, $buttonWidth, $button.Height)
-        $button.Invalidate()
+    if ($On) {
+        Set-NavLabels -Expanded $true
+        $script:NavAfter = $null
     }
-
-    $menuButton.Left = $inset
-    $menuButton.Width = $buttonWidth
-    $sidebarVersion.Left = $inset
-    $sidebarVersion.Width = $buttonWidth
-    $script:UI.NavBar.Left = if ($On) { (U 5) } else { (U 4) }
-
-    $sidebar.Width = if ($On) { (U 176) } else { (U 64) }
-    Update-NavRail
+    else {
+        # Keep the words until the rail has narrowed, then swap back to glyphs.
+        $script:NavAfter = { Set-NavLabels -Expanded $false }
+    }
+    Move-NavRail -To $(if ($On) { (U 176) } else { (U 64) })
 }
 
 # Watching the pointer beats MouseEnter/MouseLeave here: moving between the
 # rail and its own buttons fires leave on the panel, and leaving a button
 # straight out of the window may fire nothing at all.
 $script:NavWatch = New-Object System.Windows.Forms.Timer
-$script:NavWatch.Interval = 120
+# Polled often so the rail starts opening the moment the pointer arrives.
+$script:NavWatch.Interval = 60
 $script:NavWatch.add_Tick({
     if (-not $script:UiAlive) { $script:NavWatch.Stop(); return }
     try {
@@ -1062,8 +1116,8 @@ function Show-Page {
 
     $active = $script:UI.NavButtons[$Key]
     if ($active -and $script:UI.NavBar) {
-        $script:UI.NavBar.Top = $active.Top + (U 10)
         $script:UI.NavBar.Visible = $true
+        Move-NavBar -To ($active.Top + (U 10))
     }
 
     if ($Key -eq 'Logs') { Update-LogView }
@@ -1696,18 +1750,28 @@ if ($SelfTest) {
     $script:NavWatch.Stop()
     Update-NavRail
     Set-NavExpanded -On:$false
-    [System.Windows.Forms.Application]::DoEvents()
+    $settleBy = (Get-Date).AddMilliseconds(900)
+    while ($script:NavAnimator.Running -and (Get-Date) -lt $settleBy) {
+        [System.Windows.Forms.Application]::DoEvents()
+        Start-Sleep -Milliseconds 10
+    }
     $railNarrow = $sidebar.Width
     $iconText = $script:UI.NavButtons['Leaderboard'].Text
     Set-NavExpanded -On
-    [System.Windows.Forms.Application]::DoEvents()
+    $railMid = $null
+    $settleBy = (Get-Date).AddMilliseconds(900)
+    while ($script:NavAnimator.Running -and (Get-Date) -lt $settleBy) {
+        [System.Windows.Forms.Application]::DoEvents()
+        if ($null -eq $railMid -and $sidebar.Width -gt (U 80) -and $sidebar.Width -lt (U 170)) { $railMid = $sidebar.Width }
+        Start-Sleep -Milliseconds 10
+    }
     $railWide = $sidebar.Width
     $wordText = $script:UI.NavButtons['Leaderboard'].Text
     $railOverPage = $sidebar.Right -gt $contentHost.Left
     Set-NavExpanded -On:$false
     [System.Windows.Forms.Application]::DoEvents()
     $script:NavWatch.Start()
-    Write-Host ("SelfTest: nav rail collapsed={0} expanded={1} icons='{2}' words='{3}' overlapsPage={4}" -f $railNarrow, $railWide, $iconText, $wordText, $railOverPage)
+    Write-Host ("SelfTest: nav rail collapsed={0} mid={1} expanded={2} icons='{3}' words='{4}' overlapsPage={5}" -f $railNarrow, $railMid, $railWide, $iconText, $wordText, $railOverPage)
 
     Show-Page -Key 'Logs'
     [System.Windows.Forms.Application]::DoEvents()

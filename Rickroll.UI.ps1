@@ -331,6 +331,82 @@ namespace Rickroll.UI
 
         protected override void OnRenderItemCheck(ToolStripItemImageRenderEventArgs e) { }
     }
+
+    /// <summary>
+    /// Frame-driven tween for a single int property, eased out with a small
+    /// overshoot. Lives in C# because a PowerShell-driven loop can only manage
+    /// a couple of frames before the animation is over.
+    /// </summary>
+    public class Animator
+    {
+        private static readonly System.Reflection.PropertyInfo WidthProperty = typeof(Control).GetProperty("Width");
+        private static readonly System.Reflection.PropertyInfo TopProperty = typeof(Control).GetProperty("Top");
+
+        private readonly Control target;
+        private readonly bool vertical;
+        private readonly Timer timer;
+        private double from;
+        private double to;
+        private double startedMs;
+        private double durationMs;
+
+        public Action Completed { get; set; }
+
+        public Animator(Control target, string property)
+        {
+            this.target = target;
+            vertical = property == "Top";
+            timer = new Timer();
+            timer.Interval = 12;
+            timer.Tick += delegate { Step(); };
+        }
+
+        public bool Running { get { return timer.Enabled; } }
+
+        public void To(int value, int milliseconds)
+        {
+            from = Read();
+            to = value;
+            durationMs = Math.Max(1, milliseconds);
+            startedMs = Now();
+            timer.Stop();
+            timer.Start();
+        }
+
+        public void Stop() { timer.Stop(); }
+
+        private static double Now() { return DateTime.Now.Ticks / 10000.0; }
+
+        public static double EaseOutBack(double t)
+        {
+            if (t >= 1) { return 1; }
+            const double c1 = 1.70158;
+            const double c3 = c1 + 1;
+            return 1 + c3 * Math.Pow(t - 1, 3) + c1 * Math.Pow(t - 1, 2);
+        }
+
+        private int Read() { return (int)(vertical ? TopProperty : WidthProperty).GetValue(target, null); }
+
+        private void Write(int value)
+        {
+            (vertical ? TopProperty : WidthProperty).SetValue(target, value, null);
+        }
+
+        private void Step()
+        {
+            double t = Math.Min(1.0, (Now() - startedMs) / durationMs);
+            int value = (int)Math.Round(from + (to - from) * EaseOutBack(t));
+            if (!vertical && value < 8) { value = 8; }
+            Write(value);
+            if (t >= 1)
+            {
+                timer.Stop();
+                Write((int)to);
+                Action done = Completed;
+                if (done != null) { done(); }
+            }
+        }
+    }
 }
 '@
 }
