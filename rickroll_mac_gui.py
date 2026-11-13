@@ -19,14 +19,19 @@ Usage:
 Requires: Google Chrome, Brave, Edge or Chromium installed.
 """
 
+import json
 import os
 import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import tkinter as tk
+from urllib.request import Request, urlopen
 
+APP_VERSION = "1.0.1"
+RELEASES_URL = "https://api.github.com/repos/dnbdj/rickroll-launcher/releases"
 VIDEO_URL = "https://www.youtube.com/watch?v=dQw4w9WgXcQ&autoplay=1"
 
 BROWSER_PATHS = [
@@ -52,6 +57,53 @@ DANGER_BG = "#2A1B22"
 
 FONT = "Helvetica Neue"
 STEP_DELAY_MS = 800
+
+
+def version_tuple(text):
+    """'v1.0.2-beta' -> (1, 0, 2). Anything unparseable gives ()."""
+    parts = []
+    for chunk in str(text).strip().lower().lstrip("v").split("-")[0].split("."):
+        if not chunk.isdigit():
+            break
+        parts.append(int(chunk))
+    return tuple(parts)
+
+
+def newest_release(payload):
+    """Newest published release in a GitHub releases payload, or None.
+
+    Drafts are skipped and prereleases count, so a beta channel still sees new
+    builds - the same rule the Windows launcher applies.
+    """
+    best = None
+    for release in payload if isinstance(payload, list) else []:
+        if not isinstance(release, dict):
+            continue
+        if release.get("draft") or not release.get("published_at"):
+            continue
+        if not version_tuple(release.get("tag_name", "")):
+            continue
+        if best is None or release["published_at"] > best["published_at"]:
+            best = release
+    if best is None:
+        return None
+    tag = str(best.get("tag_name", ""))
+    return {
+        "version": version_tuple(tag),
+        "label": tag.lstrip("vV") or tag,
+        "url": best.get("html_url") or "",
+        "notes": best.get("body") or "",
+    }
+
+
+def fetch_releases(url=RELEASES_URL, timeout=10):
+    """The repository's releases, straight from the GitHub API."""
+    request = Request(url, headers={
+        "User-Agent": f"RickrollLauncher/{APP_VERSION}",
+        "Accept": "application/vnd.github+json",
+    })
+    with urlopen(request, timeout=timeout) as response:
+        return json.loads(response.read().decode("utf-8"))
 
 
 class FlatButton(tk.Frame):
@@ -152,7 +204,7 @@ class Stepper(tk.Frame):
 
 
 class Launcher(tk.Tk):
-    def __init__(self):
+    def __init__(self, auto_check=True):
         super().__init__()
         self.title("Rickroll Launcher")
         self.configure(bg=BG)
@@ -167,12 +219,18 @@ class Launcher(tk.Tk):
         self.browser = None
         self.procs = []
         self.job = None
+        self.update_state = "idle"
+        self.update_info = None  # not "update": that name is tkinter's own method
+        self._update_result = None
+        self._update_deadline = 0.0
 
         self._build_ui()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self.log("Launcher ready.", "quiet")
         self.log(f"Prank profile: {self.profile_dir}", "quiet")
         self.log("Panic stop: press Force stop. Closing this window also cleans up.", "quiet")
+        if auto_check:
+            self.after(600, lambda: self._check_updates(auto=True))
 
     # ---------------------------------------------------------------- layout
 
@@ -180,7 +238,7 @@ class Launcher(tk.Tk):
         header = tk.Frame(self, bg=BG)
         header.pack(fill="x", padx=22, pady=(18, 8))
         tk.Label(header, text="Rickroll", bg=BG, fg=TEXT, font=(FONT, 22, "bold")).pack(side="left")
-        tk.Label(header, text="  macOS beta 1.0", bg=BG, fg=MUTED, font=(FONT, 12)).pack(side="left", pady=(8, 0))
+        tk.Label(header, text=f"  macOS beta {APP_VERSION}", bg=BG, fg=MUTED, font=(FONT, 12)).pack(side="left", pady=(8, 0))
 
         controls = tk.Frame(self, bg=CARD, highlightbackground=STROKE, highlightthickness=1)
         controls.pack(fill="x", padx=22, pady=(6, 10))
@@ -233,6 +291,11 @@ class Launcher(tk.Tk):
         self.status_label = tk.Label(footer, text="Idle", bg=BG, fg=MUTED, font=(FONT, 11))
         self.status_label.pack(side="left", padx=(6, 0))
 
+        self.update_button = FlatButton(footer, "Check for updates", self._update_click, INNER, STROKE, STROKE, MUTED, (FONT, 10), padx=12, pady=4)
+        self.update_button.pack(side="right")
+        self.version_label = tk.Label(footer, text=f"v{APP_VERSION}", bg=BG, fg=MUTED, font=(FONT, 10))
+        self.version_label.pack(side="right", padx=(0, 10))
+
     # ------------------------------------------------------------------ log
 
     def log(self, message, level="info"):
@@ -261,6 +324,84 @@ class Launcher(tk.Tk):
             self.log(f"Plan: {windows} window(s), auto-stop after {seconds}s.", "quiet")
         else:
             self.log(f"Plan: {windows} window(s), runs until stopped.", "quiet")
+
+    # -------------------------------------------------------------- updates
+
+    def _update_click(self):
+        if self.update_state == "available" and self.update_info and self.update_info["url"]:
+            self.log(f"Opening {self.update_info['url']}", "quiet")
+            try:
+                subprocess.Popen(["open", self.update_info["url"]], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except Exception as exc:  # noqa: BLE001 - surface anything to the log
+                self.log(f"Could not open the browser: {exc}", "err")
+            return
+        self._check_updates()
+
+    def _check_updates(self, auto=False):
+        if self.update_state == "checking":
+            return
+        self.update_state = "checking"
+        self.update_button.set_text("Checking...")
+        self.update_button.set_enabled(False)
+        if not auto:
+            self.log("Checking GitHub for the newest release.", "quiet")
+        self._update_result = None
+        self._update_deadline = time.time() + 30
+        threading.Thread(target=self._fetch_updates, daemon=True).start()
+        self.after(120, self._poll_updates)
+
+    def _fetch_updates(self):
+        found = error = None
+        try:
+            found = newest_release(fetch_releases())
+        except Exception as exc:  # noqa: BLE001 - offline, rate limited, no DNS
+            error = str(exc)
+        # No tkinter calls from this thread: the main loop picks the result up.
+        self._update_result = (found, error)
+
+    def _poll_updates(self):
+        """Collect the worker's result on the main thread, or give up after 30s."""
+        if self._update_result is None:
+            if time.time() > self._update_deadline:
+                self._finish_update_check(None, "the request timed out")
+                return
+            self.after(120, self._poll_updates)
+            return
+        found, error = self._update_result
+        self._update_result = None
+        self._finish_update_check(found, error)
+
+    def _finish_update_check(self, found, error):
+        self.update_button.set_enabled(True)
+
+        if error is not None:
+            self.update_state = "error"
+            self.update_button.set_text("Check for updates")
+            self.version_label.configure(text=f"v{APP_VERSION} \u00b7 check failed", fg=MUTED)
+            self.log(f"Update check failed: {error}", "warn")
+            return
+
+        if found is None:
+            self.update_state = "current"
+            self.update_button.set_text("Check for updates")
+            self.version_label.configure(text=f"v{APP_VERSION} \u00b7 no releases", fg=MUTED)
+            self.log("Update check: no published releases found.", "quiet")
+            return
+
+        self.update_info = found
+        if found["version"] > version_tuple(APP_VERSION):
+            self.update_state = "available"
+            self.update_button.set_text(f"Get {found['label']}  \u2192")
+            self.version_label.configure(text=f"v{APP_VERSION} \u00b7 {found['label']} available", fg=ACCENT)
+            self.log(f"Update available: {found['label']} (this build is {APP_VERSION}).", "ok")
+            first_line = next((line.strip() for line in found["notes"].splitlines() if line.strip()), "")
+            if first_line:
+                self.log(f"  {first_line}", "quiet")
+        else:
+            self.update_state = "current"
+            self.update_button.set_text("Check for updates")
+            self.version_label.configure(text=f"v{APP_VERSION} \u00b7 up to date", fg=MUTED)
+            self.log(f"Update check: up to date, newest release is {found['label']}.", "quiet")
 
     # ---------------------------------------------------------------- prank
 
@@ -426,13 +567,34 @@ class Launcher(tk.Tk):
 
 
 def selftest():
-    app = Launcher()
+    app = Launcher(auto_check=False)
     app.update_idletasks()
     app.update()
     print(f"selftest: window {app.winfo_width()}x{app.winfo_height()}")
     print(f"selftest: widgets built, log lines {len(app.log_box.get('1.0', 'end').strip().splitlines())}")
     print(f"selftest: browser detected: {app._find_browser()}")
     print(f"selftest: steppers windows={app.windows_stepper.get()} seconds={app.duration_stepper.get()}")
+
+    sample = [
+        {"tag_name": "v1.0.0-beta", "draft": False, "published_at": "2026-11-12T00:00:00Z", "html_url": "u0", "body": "old"},
+        {"tag_name": "v1.0.1-beta", "draft": False, "published_at": "2026-11-13T00:00:00Z", "html_url": "u1", "body": "notes"},
+        {"tag_name": "v9.9.9", "draft": True, "published_at": "2027-01-01T00:00:00Z", "html_url": "u9", "body": ""},
+    ]
+    found = newest_release(sample)
+    print(f"selftest: newest release -> {found['label']} (draft skipped: {found['label'] == '1.0.1-beta'})")
+    for tag, expected in (("v1.0.2-beta", True), ("1.0.1", False), ("v1.0", False), ("v1.0.0", False), ("v2", True)):
+        newer = version_tuple(tag) > version_tuple(APP_VERSION)
+        print(f"selftest: {tag} newer than {APP_VERSION}: {newer} (expected {expected}, {'ok' if newer == expected else 'WRONG'})")
+
+    app._finish_update_check({"version": (9, 9, 9), "label": "9.9.9", "url": "https://example.com", "notes": "first note\nsecond"}, None)
+    print(f"selftest: available -> state={app.update_state} button='{app.update_button._label.cget('text')}' footer='{app.version_label.cget('text')}'")
+    app._finish_update_check(found, None)
+    print(f"selftest: up to date -> state={app.update_state} button='{app.update_button._label.cget('text')}' footer='{app.version_label.cget('text')}'")
+    app._finish_update_check(None, "no network")
+    print(f"selftest: failure -> state={app.update_state} footer='{app.version_label.cget('text')}' enabled={app.update_button._enabled}")
+    app._finish_update_check(None, None)
+    print(f"selftest: no releases -> state={app.update_state} footer='{app.version_label.cget('text')}'")
+
     app.after(1200, app.destroy)
     app.mainloop()
     print("selftest: built, shown and closed without errors")
