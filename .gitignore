@@ -6,3 +6,7 @@ settings.json
 
 # local tooling
 .freebuff/
+
+# python
+__pycache__/
+*.pyc
