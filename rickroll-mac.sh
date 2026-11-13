@@ -1,5 +1,5 @@
 #!/bin/bash
-# Rickroll Launcher - macOS edition, beta 1.0
+# Rickroll Launcher - macOS edition, beta 1.1
 #
 # Opens a pile of Chromium browser windows with "Never Gonna Give You Up"
 # playing in each one. Audio is forced on with --autoplay-policy, so nobody
@@ -57,7 +57,7 @@ if ! BROWSER="$(find_browser)"; then
   exit 1
 fi
 
-echo "Rickroll (macOS beta 1.0)"
+echo "Rickroll (macOS beta 1.1)"
 echo "  browser : $BROWSER"
 echo "  windows : $WINDOWS"
 echo "  runtime : ${DURATION}s, then it cleans up"

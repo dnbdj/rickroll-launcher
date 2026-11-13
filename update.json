@@ -1,5 +1,5 @@
 {
-  "version": "1.0.0",
+  "version": "1.0.1",
   "url": "https://github.com/dnbdj/rickroll-launcher/releases/latest",
-  "notes": "Beta 1.0 - first packaged release. Tabbed launcher with logs and update checks on Windows; CLI script for macOS."
+  "notes": "Mac build now downloads as a double-clickable app, and the update checker talks to this repo's releases directly."
 }

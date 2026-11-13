@@ -1,0 +1,4 @@
+# Keep the macOS scripts on LF or bash dies with "\r: command not found".
+*.sh text eol=lf
+*.command text eol=lf
+*.py text eol=lf

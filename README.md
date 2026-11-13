@@ -7,7 +7,7 @@ A prank app. It opens a pile of browser windows with **Never Gonna Give You Up**
 Grab the latest build from **[Releases](https://github.com/dnbdj/rickroll-launcher/releases)**.
 
 - **Windows** — `rickroll-launcher-windows-beta1.0.zip`. Unzip and run `Launcher.cmd`.
-- **macOS** — `rickroll-launcher-macos-beta1.0.zip`. Run `python3 rickroll_mac_gui.py`.
+- **macOS** — `rickroll-launcher-macos-beta1.1.zip`. Unzip and double-click **Rickroll Launcher.app** (first time: right-click → **Open**).
 
 ## Windows
 
@@ -26,7 +26,9 @@ Prefer the console? `Rickroll.ps1` takes `-Windows`, `-Desktops`, `-DurationSeco
 
 ## macOS
 
-`rickroll_mac_gui.py` is the same flow built on Python 3 + tkinter, so nothing needs installing beyond Python itself. The bash script `rickroll-mac.sh` does the same from a terminal.
+The Mac download is a real app bundle: unzip it, double-click **Rickroll Launcher.app**, and that is the whole install. It is unsigned, so the first launch needs a right-click → **Open**; the `README.txt` inside the zip covers that and the quarantine command.
+
+The app is `rickroll_mac_gui.py` on Python 3 + tkinter, wrapped by a small launcher that finds a usable Python and falls back to the terminal version if there isn't one. `rickroll-mac.sh` is that terminal version.
 
 macOS has no public API for creating Spaces, so the Mac build cannot spread windows across desktops — they open on the Space you are on. It has also not been run on real Mac hardware yet.
 
@@ -35,6 +37,6 @@ macOS has no public API for creating Spaces, so the Mac build cannot spread wind
 | Platform | How |
 | --- | --- |
 | Windows | `Ctrl+Alt+Q`, the **Force stop** button, or `Stop-Rickroll.cmd` |
-| macOS | the **Force stop** button, closing the window, or `./stop-rickroll-mac.sh` |
+| macOS | the **Force stop** button, closing the window, or `bash stop-rickroll-mac.sh` |
 
 Every window runs under a throwaway browser profile in the temp folder, which is how the stop commands close exactly the prank windows and never your real browsing session. Desktops created by the prank are removed on stop unless you tick *Keep desktops on stop*.

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Rickroll Launcher - macOS GUI (beta 1.0).
+"""Rickroll Launcher - macOS GUI (beta 1.1).
 
 A tkinter front-end for the prank: opens a pile of Chromium browser windows
 with the song playing in each one, then cleans up after itself.

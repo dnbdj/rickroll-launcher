@@ -94,7 +94,7 @@ $script:G = @{
     Caret  = [string][char]0x25BE
 }
 
-$script:AppVersion = '1.0.0'
+$script:AppVersion = '1.0.1'
 
 # -------------------------------------------------------------------- widgets
 
@@ -259,7 +259,7 @@ $script:Opts = @{
     Seconds      = 120
     Hotkey       = 'Ctrl+Alt+Q'
     KeepDesktops = $false
-    UpdateUrl    = ''
+    UpdateUrl    = 'https://api.github.com/repos/dnbdj/rickroll-launcher/releases'
 }
 
 $script:State = @{
@@ -1166,16 +1166,45 @@ function Complete-UpdateCheck {
     $script:UpdateCheck.LastChecked = Get-Date
 
     try {
-        $manifest = $Json | ConvertFrom-Json
+        $payload = $Json | ConvertFrom-Json
     }
     catch {
-        Add-Log 'Update manifest is not valid JSON.' 'warn' 'App'
+        Add-Log 'Update check: the source did not return valid JSON.' 'warn' 'App'
         Set-UpdateState 'error'
         return
     }
 
+    if ($payload -is [System.Array]) {
+        # GitHub releases API: pick the newest published release, prereleases included
+        # so a beta channel still reports new builds.
+        $release = $payload |
+            Where-Object { $_.draft -ne $true -and $_.published_at } |
+            Sort-Object -Property published_at -Descending |
+            Select-Object -First 1
+
+        if (-not $release) {
+            Add-Log 'Update check: the repository has no published releases yet.' 'quiet' 'App'
+            Set-UpdateState 'current'
+            return
+        }
+
+        $kind = 'release'
+        if ($release.prerelease) { $kind = 'prerelease' }
+        Add-Log ("Newest on GitHub: {0} ({1})" -f $release.tag_name, $kind) 'quiet' 'App'
+
+        $manifest = [pscustomobject]@{
+            version = $release.tag_name
+            url     = $release.html_url
+            notes   = $release.body
+        }
+    }
+    else {
+        $manifest = $payload
+    }
+
     $latestText = [string]$manifest.version
-    if ($latestText -match '^[vV]') { $latestText = $latestText.Substring(1) }
+    $latestText = $latestText -replace '^[vV]', ''
+    $latestText = ($latestText -split '-')[0]
     if (-not $latestText) {
         Add-Log 'Update manifest has no "version" field.' 'warn' 'App'
         Set-UpdateState 'error'
@@ -1202,7 +1231,9 @@ function Complete-UpdateCheck {
     }
     else {
         $script:UpdateCheck.Available = $false
-        $script:UpdateCheck.Version = ''
+        # Keep the newest version around even when it is not newer: it is what the
+        # self-test prints to prove the check really reached the source.
+        $script:UpdateCheck.Version = $latestText
         $script:UpdateCheck.Url = ''
         $script:UpdateCheck.Notes = ''
         Add-Log ("Update check: up to date ({0})" -f $script:AppVersion) 'quiet' 'App'
@@ -1227,8 +1258,15 @@ function Start-UpdateCheck {
 
     if ($source -match '^(?i)https?://') {
         try {
+            # System.Net.Http is not loaded by default in PowerShell 5.1, so without this
+            # the client could never be constructed and every http check failed.
+            Add-Type -AssemblyName System.Net.Http -ErrorAction Stop
+            [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor [System.Net.SecurityProtocolType]::Tls12
             $client = New-Object System.Net.Http.HttpClient
             $client.Timeout = [TimeSpan]::FromSeconds(10)
+            # GitHub's API rejects requests with no User-Agent.
+            [void]$client.DefaultRequestHeaders.TryAddWithoutValidation('User-Agent', "RickrollLauncher/$($script:AppVersion)")
+            [void]$client.DefaultRequestHeaders.TryAddWithoutValidation('Accept', 'application/vnd.github+json')
             $script:UpdateCheck.Client = $client
             $script:UpdateCheck.Task = $client.GetStringAsync($source)
             $script:UpdateCheckTimer.Start()
@@ -1457,6 +1495,16 @@ if ($SelfTest) {
     Start-UpdateCheck
     [System.Windows.Forms.Application]::DoEvents()
     Write-Host ("SelfTest: older manifest -> state={0} arrowVisible={1} button='{2}'" -f $script:UpdateCheck.State, $updateArrow.Visible, $updateButton.Text)
+
+    $script:Opts.UpdateUrl = 'https://api.github.com/repos/dnbdj/rickroll-launcher/releases'
+    Start-UpdateCheck
+    $waited = 0
+    while ($script:UpdateCheck.State -eq 'checking' -and $waited -lt 15000) {
+        [System.Windows.Forms.Application]::DoEvents()
+        Start-Sleep -Milliseconds 100
+        $waited += 100
+    }
+    Write-Host ("SelfTest: live github check -> state={0} latest='{1}' checkedAt={2} waited={3}ms" -f $script:UpdateCheck.State, $script:UpdateCheck.Version, $script:UI.LastCheckedValue.Text, $waited)
 
     Remove-Item -LiteralPath $tempManifest -Force -ErrorAction SilentlyContinue
     $script:Opts.UpdateUrl = ''

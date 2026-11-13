@@ -10,3 +10,4 @@ settings.json
 # python
 __pycache__/
 *.pyc
+dist/
