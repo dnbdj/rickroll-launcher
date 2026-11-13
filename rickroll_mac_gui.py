@@ -582,8 +582,11 @@ def selftest():
     ]
     found = newest_release(sample)
     print(f"selftest: newest release -> {found['label']} (draft skipped: {found['label'] == '1.0.1-beta'})")
+    problems = []
     for tag, expected in (("v1.0.2-beta", True), ("1.0.1", False), ("v1.0", False), ("v1.0.0", False), ("v2", True)):
         newer = version_tuple(tag) > version_tuple(APP_VERSION)
+        if newer != expected:
+            problems.append(f"{tag} newer than {APP_VERSION} gave {newer}, expected {expected}")
         print(f"selftest: {tag} newer than {APP_VERSION}: {newer} (expected {expected}, {'ok' if newer == expected else 'WRONG'})")
 
     app._finish_update_check({"version": (9, 9, 9), "label": "9.9.9", "url": "https://example.com", "notes": "first note\nsecond"}, None)
@@ -598,6 +601,9 @@ def selftest():
     app.after(1200, app.destroy)
     app.mainloop()
     print("selftest: built, shown and closed without errors")
+    if problems:
+        print("selftest FAILED: " + "; ".join(problems))
+        sys.exit(1)
 
 
 def main():
