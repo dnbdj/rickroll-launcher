@@ -33,7 +33,7 @@ import tkinter as tk
 from tkinter import messagebox
 from urllib.request import Request, urlopen
 
-APP_VERSION = "1.0.7"
+APP_VERSION = "1.0.8"
 RELEASES_URL = "https://api.github.com/repos/dnbdj/rickroll-launcher/releases"
 
 # The selftest points this at a temp file so it never touches real stats.
@@ -360,7 +360,6 @@ class Launcher(tk.Tk):
         self.running = False
         self.opened = 0
         self.total = 0
-        self.ends_at = None
         self.browser = None
         self.procs = []
         self.job = None
@@ -536,11 +535,9 @@ class Launcher(tk.Tk):
         self.force_button = FlatButton(inner, "Force stop", self._force_stop, INNER, DANGER_BG, DANGER_BG, DANGER, (FONT, 11, "bold"))
         self.force_button.pack(side="left", padx=(10, 0))
 
-        # Packed right to left, so this reads Windows then Seconds like the Windows app.
-        self.duration_stepper = Stepper(inner, "Seconds", 120, 0, 3600, 30, self._on_option_change)
-        self.duration_stepper.pack(side="right")
+        # Packed right to left, so this stays right-aligned like the Windows app.
         self.windows_stepper = Stepper(inner, "Windows", 8, 1, 40, 1, self._on_option_change)
-        self.windows_stepper.pack(side="right", padx=(0, 8))
+        self.windows_stepper.pack(side="right")
 
         self.plan_label = tk.Label(page, text="", bg=BG, fg="#BFC4D6", font=(FONT, 10), anchor="w", justify="left")
         self.plan_label.pack(fill="x", padx=20)
@@ -700,9 +697,6 @@ class Launcher(tk.Tk):
 
     def _plan_text(self):
         windows = self.windows_stepper.get()
-        seconds = self.duration_stepper.get()
-        if seconds > 0:
-            return f"Plan: {windows} window(s) on this Space, auto-stop after {seconds}s."
         return f"Plan: {windows} window(s) on this Space, runs until you stop it."
 
     def _on_option_change(self):
@@ -910,7 +904,6 @@ class Launcher(tk.Tk):
         self.total = self.windows_stepper.get()
         self.opened = 0
         self.procs = []
-        self.ends_at = None
         self.started_at = time.time()
         self.running = True
         os.makedirs(self.profile_dir, exist_ok=True)
@@ -955,23 +948,7 @@ class Launcher(tk.Tk):
 
     def _live(self):
         self.log(f"Live - {self.opened} window(s) playing", "ok")
-        seconds = self.duration_stepper.get()
-        if seconds > 0:
-            self.ends_at = time.time() + seconds
-            self._tick()
-        else:
-            self._set_status("Live \u00b7 until you stop it", ACCENT)
-
-    def _tick(self):
-        if not self.running or self.ends_at is None:
-            return
-        left = int(round(self.ends_at - time.time()))
-        if left <= 0:
-            self.log("Duration reached - cleaning up.", "quiet")
-            self.stop()
-            return
-        self._set_status(f"Live \u00b7 {left}s left", ACCENT)
-        self.after(500, self._tick)
+        self._set_status("Live \u00b7 until you stop it", ACCENT)
 
     def stop(self, force=False):
         if self.job is not None:
@@ -980,7 +957,6 @@ class Launcher(tk.Tk):
 
         was_running = self.running
         self.running = False
-        self.ends_at = None
 
         if force and was_running:
             self.log("Force stop - killing windows now.", "warn")
@@ -1055,7 +1031,7 @@ def selftest():
     print(f"selftest: window {app.winfo_width()}x{app.winfo_height()}")
     print(f"selftest: widgets built, log lines {len(app.log_box.get('1.0', 'end').strip().splitlines())}")
     print(f"selftest: browser detected: {app._find_browser()}")
-    print(f"selftest: steppers windows={app.windows_stepper.get()} seconds={app.duration_stepper.get()}")
+    print(f"selftest: stepper windows={app.windows_stepper.get()}")
 
     def visible_rows():
         return sum(1 for row in app.board_rows if row["frame"].winfo_manager())

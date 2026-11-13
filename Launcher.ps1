@@ -94,7 +94,7 @@ $script:G = @{
     Caret  = [string][char]0x25BE
 }
 
-$script:AppVersion = '1.0.7'
+$script:AppVersion = '1.0.8'
 
 # -------------------------------------------------------------------- widgets
 
@@ -256,7 +256,6 @@ $script:SettingsPath = Join-Path $PSScriptRoot 'settings.json'
 $script:Opts = @{
     Windows      = 8
     Desktops     = 3
-    Seconds      = 120
     Hotkey       = 'Ctrl+Alt+Q'
     KeepDesktops = $false
     UpdateUrl    = 'https://api.github.com/repos/dnbdj/rickroll-launcher/releases'
@@ -267,7 +266,6 @@ $script:State = @{
     Plan            = $null
     Queue           = $null
     DesktopsCreated = 0
-    EndsAt          = $null
     StartedAt       = $null
 }
 
@@ -303,7 +301,7 @@ function Import-Settings {
     if (-not (Test-Path -LiteralPath $script:SettingsPath)) { return }
     try {
         $saved = Get-Content -Raw -LiteralPath $script:SettingsPath | ConvertFrom-Json
-        foreach ($key in @('Windows', 'Desktops', 'Seconds', 'Hotkey', 'KeepDesktops', 'UpdateUrl')) {
+        foreach ($key in @('Windows', 'Desktops', 'Hotkey', 'KeepDesktops', 'UpdateUrl')) {
             if ($saved.PSObject.Properties.Name -contains $key) { $script:Opts[$key] = $saved.$key }
         }
     }
@@ -613,6 +611,8 @@ function Update-NavRail {
 }
 
 function Test-NavHover {
+    # The watch timer can tick once more while the form is closing.
+    if ($null -eq $sidebar -or $sidebar.IsDisposed) { return $false }
     $point = [System.Windows.Forms.Cursor]::Position
     $rect = $sidebar.RectangleToScreen($sidebar.ClientRectangle)
     return $rect.Contains($point)
@@ -649,6 +649,7 @@ function Set-NavExpanded {
 $script:NavWatch = New-Object System.Windows.Forms.Timer
 $script:NavWatch.Interval = 120
 $script:NavWatch.add_Tick({
+    if ($null -eq $sidebar -or $sidebar.IsDisposed) { $script:NavWatch.Stop(); return }
     $hovered = Test-NavHover
     if (-not $hovered) { $script:NavSuppressed = $false }
     $want = $hovered -and (-not $script:NavSuppressed)
@@ -743,10 +744,9 @@ $controlCard.Controls.Add($startButton)
 $forceButton = New-RoundButton -Text 'Force stop' -X 214 -Y 18 -W 140 -H 60 -Radius 14 -Fill $script:Palette.Inner -Hover $script:Palette.DangerHi -Press $script:Palette.DangerHi -TextColor $script:Palette.Danger -Border '#3A2730' -Size 10 -Style Semibold
 $controlCard.Controls.Add($forceButton)
 
-$windowsStepper = New-Stepper -Key 'Windows' -Label 'Windows' -Min 1 -Max 40 -Step 1 -X 368 -Y 14
-$desktopsStepper = New-Stepper -Key 'Desktops' -Label 'Desktops' -Min 0 -Max 8 -Step 1 -X 474 -Y 14
-$secondsStepper = New-Stepper -Key 'Seconds' -Label 'Seconds' -Min 0 -Max 3600 -Step 30 -X 580 -Y 14
-foreach ($stepper in @($windowsStepper, $desktopsStepper, $secondsStepper)) {
+$windowsStepper = New-Stepper -Key 'Windows' -Label 'Windows' -Min 1 -Max 40 -Step 1 -X 474 -Y 14
+$desktopsStepper = New-Stepper -Key 'Desktops' -Label 'Desktops' -Min 0 -Max 8 -Step 1 -X 580 -Y 14
+foreach ($stepper in @($windowsStepper, $desktopsStepper)) {
     $stepper.Anchor = 'Top,Right'
     $controlCard.Controls.Add($stepper)
 }
@@ -1053,8 +1053,6 @@ function Show-Page {
 
 $script:StepTimer = New-Object System.Windows.Forms.Timer
 $script:StepTimer.Interval = 120
-$script:CountTimer = New-Object System.Windows.Forms.Timer
-$script:CountTimer.Interval = 500
 
 $script:LogHandler = {
     param($message, $level)
@@ -1079,7 +1077,6 @@ function Start-Prank {
     $script:State.Plan = $plan
     $script:State.Queue = $queue
     $script:State.DesktopsCreated = 0
-    $script:State.EndsAt = $null
     $script:State.StartedAt = Get-Date
     $script:State.Running = $true
 
@@ -1102,11 +1099,9 @@ function Stop-Prank {
     $profileDir = if ($script:State.Plan) { $script:State.Plan.ProfileDir } else { Get-RickrollProfileDir }
 
     $script:State.Running = $false
-    $script:State.EndsAt = $null
     if ($script:State.Queue) { $script:State.Queue.Clear() }
     $script:State.Queue = $null
     $script:StepTimer.Stop()
-    $script:CountTimer.Stop()
 
     if (-not $wasRunning) {
         $strays = 0
@@ -1160,14 +1155,7 @@ $script:StepTimer.add_Tick({
         if ($script:State.Queue.Count -eq 0) {
             $script:StepTimer.Stop()
             Add-Log ("Prank live - {0} window(s) on {1} desktop(s)" -f $script:State.Plan.Windows, ($script:State.DesktopsCreated + 1)) 'ok' 'Prank'
-            if ([int]$script:Opts.Seconds -gt 0) {
-                $script:State.EndsAt = (Get-Date).AddSeconds([double]$script:Opts.Seconds)
-                $script:CountTimer.Start()
-                Set-Status ("Live {0} {1}s left" -f $script:G.Dot, $script:Opts.Seconds) $script:Palette.Accent
-            }
-            else {
-                Set-Status ("Live {0} until you stop it" -f $script:G.Dot) $script:Palette.Accent
-            }
+            Set-Status ("Live {0} until you stop it" -f $script:G.Dot) $script:Palette.Accent
             return
         }
 
@@ -1186,18 +1174,6 @@ $script:StepTimer.add_Tick({
         $script:StepTimer.Stop()
         Stop-Prank
     }
-})
-
-$script:CountTimer.add_Tick({
-    if ($null -eq $script:State.EndsAt) { $script:CountTimer.Stop(); return }
-    $left = [int][Math]::Ceiling(($script:State.EndsAt - (Get-Date)).TotalSeconds)
-    if ($left -le 0) {
-        $script:CountTimer.Stop()
-        Add-Log 'Duration reached - cleaning up.' 'quiet' 'Prank'
-        Stop-Prank
-        return
-    }
-    Set-Status ("Live {0} {1}s left" -f $script:G.Dot, $left) $script:Palette.Accent
 })
 
 # ------------------------------------------------------------------ hotkey
@@ -1658,7 +1634,7 @@ $form.add_Resize({
 # ------------------------------------------------------------ start it up
 
 Import-Settings
-foreach ($key in @('Windows', 'Desktops', 'Seconds')) {
+foreach ($key in @('Windows', 'Desktops')) {
     $script:UI.Values[$key].Text = [string]$script:Opts[$key]
 }
 Update-PlanInfo
@@ -1675,6 +1651,7 @@ $form.add_Shown({
 
 $form.add_FormClosing({
     Save-Settings
+    try { $script:NavWatch.Stop() } catch { }
     try {
         if ($script:State.Running) { Stop-Prank -Force }
         else { [void](Stop-RickrollPrank -DesktopsToClose (Get-RickrollDesktopCount)) }
