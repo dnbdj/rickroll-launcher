@@ -94,7 +94,7 @@ $script:G = @{
     Caret  = [string][char]0x25BE
 }
 
-$script:AppVersion = '1.0.8'
+$script:AppVersion = '1.0.9'
 
 # -------------------------------------------------------------------- widgets
 
@@ -420,6 +420,19 @@ function Update-Board {
 
 # --------------------------------------------------------------------- form
 
+# A PowerShell scriptblock that throws inside a WinForms event (a timer tick,
+# say) otherwise comes up as a .NET Framework "Unhandled exception" dialog that
+# looks like a crash. Route those to the log and keep the launcher running.
+[System.Windows.Forms.Application]::SetUnhandledExceptionMode([System.Windows.Forms.UnhandledExceptionMode]::CatchException)
+[System.Windows.Forms.Application]::add_ThreadException({
+    param($sender, $exceptionEvent)
+    $detail = 'unknown error'
+    try { $detail = $exceptionEvent.Exception.Message } catch { }
+    try { Add-Log ("UI error, launcher kept running: {0}" -f $detail) 'err' 'App' } catch { }
+})
+
+$script:UiAlive = $true
+
 $form = New-Object System.Windows.Forms.Form
 $form.Text = 'Rickroll Launcher'
 $form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::None
@@ -612,7 +625,7 @@ function Update-NavRail {
 
 function Test-NavHover {
     # The watch timer can tick once more while the form is closing.
-    if ($null -eq $sidebar -or $sidebar.IsDisposed) { return $false }
+    if (-not $script:UiAlive -or $null -eq $sidebar -or $sidebar.IsDisposed) { return $false }
     $point = [System.Windows.Forms.Cursor]::Position
     $rect = $sidebar.RectangleToScreen($sidebar.ClientRectangle)
     return $rect.Contains($point)
@@ -620,6 +633,7 @@ function Test-NavHover {
 
 function Set-NavExpanded {
     param([switch]$On)
+    if (-not $script:UiAlive) { return }
     if ([bool]$On -eq $script:NavExpanded) { return }
     $script:NavExpanded = [bool]$On
 
@@ -649,11 +663,17 @@ function Set-NavExpanded {
 $script:NavWatch = New-Object System.Windows.Forms.Timer
 $script:NavWatch.Interval = 120
 $script:NavWatch.add_Tick({
-    if ($null -eq $sidebar -or $sidebar.IsDisposed) { $script:NavWatch.Stop(); return }
-    $hovered = Test-NavHover
-    if (-not $hovered) { $script:NavSuppressed = $false }
-    $want = $hovered -and (-not $script:NavSuppressed)
-    if ($want -ne $script:NavExpanded) { Set-NavExpanded -On:$want }
+    if (-not $script:UiAlive) { $script:NavWatch.Stop(); return }
+    try {
+        $hovered = Test-NavHover
+        if (-not $hovered) { $script:NavSuppressed = $false }
+        $want = $hovered -and (-not $script:NavSuppressed)
+        if ($want -ne $script:NavExpanded) { Set-NavExpanded -On:$want }
+    }
+    catch {
+        # The window is going away mid-tick; there is nothing left to hover.
+        $script:NavWatch.Stop()
+    }
 })
 $script:NavWatch.Start()
 
@@ -1650,8 +1670,10 @@ $form.add_Shown({
 })
 
 $form.add_FormClosing({
-    Save-Settings
+    $script:UiAlive = $false
     try { $script:NavWatch.Stop() } catch { }
+    try { $script:StepTimer.Stop() } catch { }
+    Save-Settings
     try {
         if ($script:State.Running) { Stop-Prank -Force }
         else { [void](Stop-RickrollPrank -DesktopsToClose (Get-RickrollDesktopCount)) }

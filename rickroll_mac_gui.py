@@ -33,7 +33,7 @@ import tkinter as tk
 from tkinter import messagebox
 from urllib.request import Request, urlopen
 
-APP_VERSION = "1.0.8"
+APP_VERSION = "1.0.9"
 RELEASES_URL = "https://api.github.com/repos/dnbdj/rickroll-launcher/releases"
 
 # The selftest points this at a temp file so it never touches real stats.
