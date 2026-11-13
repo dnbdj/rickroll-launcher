@@ -17,7 +17,7 @@ Requires Windows 10/11 with the built-in PowerShell 5.1, plus Edge, Chrome or Br
 
 - **Prank** — start/stop, force stop, window and duration steppers, and a live summary of the plan
 - **Logs** — timestamped, colour-coded channels (`All`, `App`, `Prank`, `Errors`) with a channel picker
-- **Leaderboard** — placeholder, scoring format still to be decided
+- **Leaderboard** — local stats from your own runs: how many, best window count, longest session, and the last five, saved in `leaderboard.json`
 - **Updates** — checks GitHub for the newest release on launch; press the button to fetch, or the arrow for release notes and other options
 
 A global panic hotkey (**Ctrl+Alt+Q** by default, configurable in the `...` menu) stops the prank from any desktop, including the ones it created.

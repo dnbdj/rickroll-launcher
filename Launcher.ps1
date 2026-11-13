@@ -268,6 +268,7 @@ $script:State = @{
     Queue           = $null
     DesktopsCreated = 0
     EndsAt          = $null
+    StartedAt       = $null
 }
 
 $script:LogChannels = @{}
@@ -284,6 +285,9 @@ $script:UI = @{
     CurrentPage      = 'Prank'
     HotkeyRegistered = $false
     NavBar           = $null
+    BoardRows        = @()
+    BoardStatValues  = @{}
+    BoardEmpty       = $null
 }
 
 $script:HotkeyMap = [ordered]@{
@@ -310,6 +314,102 @@ function Save-Settings {
         $script:Opts | ConvertTo-Json | Set-Content -LiteralPath $script:SettingsPath -Encoding UTF8
     }
     catch { }
+}
+
+# ---------------------------------------------------------------- leaderboard
+
+$script:BoardPath = Join-Path $PSScriptRoot 'leaderboard.json'
+$script:Board = @{ Runs = @() }
+
+function Import-Board {
+    if (-not (Test-Path -LiteralPath $script:BoardPath)) { return }
+    try {
+        $saved = Get-Content -Raw -LiteralPath $script:BoardPath | ConvertFrom-Json
+        if ($saved.PSObject.Properties.Name -contains 'Runs') {
+            $script:Board.Runs = @($saved.Runs | Where-Object { $null -ne $_ })
+        }
+    }
+    catch { }
+}
+
+function Save-Board {
+    try {
+        @{ Runs = @($script:Board.Runs) } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $script:BoardPath -Encoding UTF8
+    }
+    catch { }
+}
+
+function Format-BoardDuration {
+    param([int]$Seconds)
+
+    if ($Seconds -le 0) { return '0s' }
+    if ($Seconds -lt 60) { return ("{0}s" -f $Seconds) }
+    $minutes = [int][Math]::Floor($Seconds / 60)
+    if ($minutes -lt 60) { return ("{0}m {1:00}s" -f $minutes, ($Seconds % 60)) }
+    return ("{0}h {1:00}m" -f [int][Math]::Floor($minutes / 60), ($minutes % 60))
+}
+
+function Add-BoardRun {
+    param(
+        [int]$Windows = 0,
+        [int]$Seconds = 0,
+        [int]$Desktops = 0,
+        [bool]$Forced = $false
+    )
+
+    if ($Windows -le 0 -and $Seconds -le 0) { return }
+
+    $run = [pscustomobject]@{
+        At       = (Get-Date).ToString('yyyy-MM-dd HH:mm')
+        Windows  = $Windows
+        Seconds  = $Seconds
+        Desktops = $Desktops
+        Forced   = $Forced
+    }
+
+    $runs = New-Object System.Collections.ArrayList
+    [void]$runs.Add($run)
+    foreach ($old in @($script:Board.Runs)) { [void]$runs.Add($old) }
+    while ($runs.Count -gt 50) { $runs.RemoveAt($runs.Count - 1) }
+
+    $script:Board.Runs = $runs.ToArray()
+    Save-Board
+    Update-Board
+}
+
+function Update-Board {
+    if ($script:UI.BoardStatValues.Count -eq 0) { return }
+
+    $runs = @($script:Board.Runs)
+    $best = 0
+    $longest = 0
+    $totalWindows = 0
+    foreach ($run in $runs) {
+        if ([int]$run.Windows -gt $best) { $best = [int]$run.Windows }
+        if ([int]$run.Seconds -gt $longest) { $longest = [int]$run.Seconds }
+        $totalWindows += [int]$run.Windows
+    }
+
+    $script:UI.BoardStatValues['Runs'].Text = [string]$runs.Count
+    $script:UI.BoardStatValues['Best'].Text = [string]$best
+    $script:UI.BoardStatValues['Longest'].Text = (Format-BoardDuration $longest)
+    $script:UI.BoardStatValues['Windows'].Text = [string]$totalWindows
+
+    for ($i = 0; $i -lt $script:UI.BoardRows.Count; $i++) {
+        $labels = $script:UI.BoardRows[$i]
+        if ($i -lt $runs.Count) {
+            $run = $runs[$i]
+            $labels['When'].Text = [string]$run.At
+            $labels['Windows'].Text = ("{0} windows" -f $run.Windows)
+            $labels['Duration'].Text = (Format-BoardDuration ([int]$run.Seconds))
+            foreach ($part in $labels.Values) { $part.Visible = $true }
+        }
+        else {
+            foreach ($part in $labels.Values) { $part.Visible = $false }
+        }
+    }
+
+    if ($script:UI.BoardEmpty) { $script:UI.BoardEmpty.Visible = ($runs.Count -eq 0) }
 }
 
 # --------------------------------------------------------------------- form
@@ -641,21 +741,49 @@ $boardCard.Anchor = 'Top,Bottom,Left,Right'
 $boardPage.Controls.Add($boardCard)
 $boardCard.Controls.Add((New-Label -Text 'Leaderboard' -X 18 -Y 14 -W 200 -H 26 -Size 10.5 -Style Semibold -Back $script:Palette.Card))
 
-$soonBadge = New-Card -X 624 -Y 16 -W 58 -H 22 -Radius 11 -Fill $script:Palette.Inner
-$soonBadge.Anchor = 'Top,Right'
-$soonBadge.Controls.Add((New-Label -Text 'SOON' -X 0 -Y 0 -W 58 -H 22 -Size 7 -Style Semibold -Color $script:Palette.Muted -Back $script:Palette.Inner -Align 'MiddleCenter'))
-$boardCard.Controls.Add($soonBadge)
+$localBadge = New-Card -X 612 -Y 16 -W 70 -H 22 -Radius 11 -Fill $script:Palette.Inner
+$localBadge.Anchor = 'Top,Right'
+$localBadge.Controls.Add((New-Label -Text 'ON THIS PC' -X 0 -Y 0 -W 70 -H 22 -Size 7 -Style Semibold -Color $script:Palette.Muted -Back $script:Palette.Inner -Align 'MiddleCenter'))
+$boardCard.Controls.Add($localBadge)
 
-$skeletonY = 66
-for ($row = 0; $row -lt 4; $row++) {
-    $skeleton = New-Card -X 18 -Y $skeletonY -W 664 -H 26 -Radius 7 -Fill '#1B1E2C' -Border ''
-    $skeleton.Anchor = 'Top,Left,Right'
-    $boardCard.Controls.Add($skeleton)
-    $skeletonY += 34
+$statX = 18
+foreach ($statDef in @(
+    @{ Key = 'Runs'; Caption = 'RUNS' },
+    @{ Key = 'Best'; Caption = 'BEST RUN' },
+    @{ Key = 'Longest'; Caption = 'LONGEST RUN' },
+    @{ Key = 'Windows'; Caption = 'WINDOWS OPENED' }
+)) {
+    $boardCard.Controls.Add((New-Label -Text $statDef.Caption -X $statX -Y 58 -W 160 -H 14 -Size 7 -Color $script:Palette.Muted -Back $script:Palette.Card))
+    $statValue = New-Label -Text '-' -X $statX -Y 74 -W 160 -H 28 -Size 14 -Style Semibold -Color $script:Palette.Text -Back $script:Palette.Card
+    $boardCard.Controls.Add($statValue)
+    $script:UI.BoardStatValues[$statDef.Key] = $statValue
+    $statX += 168
 }
 
-$boardCard.Controls.Add((New-Label -Text 'No scores yet' -X 18 -Y 226 -W 664 -H 26 -Size 11 -Style Semibold -Color $script:Palette.Text -Back $script:Palette.Card -Align 'MiddleCenter'))
-$boardCard.Controls.Add((New-Label -Text 'How scoring works is still TBD - the wiring comes later.' -X 118 -Y 256 -W 464 -H 40 -Size 8.5 -Color $script:Palette.Muted -Back $script:Palette.Card -Align 'TopCenter'))
+$boardCard.Controls.Add((New-Label -Text 'RECENT RUNS' -X 18 -Y 120 -W 300 -H 14 -Size 7 -Color $script:Palette.Muted -Back $script:Palette.Card))
+
+$boardEmpty = New-Label -Text 'No runs yet - start the prank, stop it, and it lands here.' -X 18 -Y 152 -W 664 -H 30 -Size 9 -Color $script:Palette.Muted -Back $script:Palette.Card -Align 'MiddleCenter'
+$boardCard.Controls.Add($boardEmpty)
+$script:UI.BoardEmpty = $boardEmpty
+
+$rowY = 150
+for ($rowIndex = 0; $rowIndex -lt 5; $rowIndex++) {
+    $boardRow = New-Card -X 18 -Y $rowY -W 664 -H 40 -Radius 9 -Fill $script:Palette.Inner -Border $script:Palette.Stroke
+    $boardRow.Anchor = 'Top,Left,Right'
+    $boardRow.Visible = $false
+    $boardCard.Controls.Add($boardRow)
+
+    $rowWhen = New-Label -Text '' -X 14 -Y 0 -W 240 -H 40 -Size 9 -Color $script:Palette.Text -Back $script:Palette.Inner
+    $rowCount = New-Label -Text '' -X 264 -Y 0 -W 220 -H 40 -Size 9 -Color '#BFC4D6' -Back $script:Palette.Inner
+    $rowDuration = New-Label -Text '' -X 490 -Y 0 -W 160 -H 40 -Size 9 -Style Semibold -Color $script:Palette.Text -Back $script:Palette.Inner -Align 'MiddleRight'
+    foreach ($rowLabel in @($rowWhen, $rowCount, $rowDuration)) { $boardRow.Controls.Add($rowLabel) }
+
+    $script:UI.BoardRows += ,@{ When = $rowWhen; Windows = $rowCount; Duration = $rowDuration; Back = $boardRow }
+    $rowY += 46
+}
+
+Import-Board
+Update-Board
 
 # --- Updates page ---
 
@@ -863,6 +991,7 @@ function Start-Prank {
     $script:State.Queue = $queue
     $script:State.DesktopsCreated = 0
     $script:State.EndsAt = $null
+    $script:State.StartedAt = Get-Date
     $script:State.Running = $true
 
     Set-UiRunning $true
@@ -918,8 +1047,16 @@ function Stop-Prank {
     }
     Add-Log $summary 'ok' 'App'
 
+    $elapsed = 0
+    if ($script:State.StartedAt) { $elapsed = [int][Math]::Round(((Get-Date) - $script:State.StartedAt).TotalSeconds) }
+    $opened = 0
+    if ($script:State.Plan) { $opened = [int]$script:State.Plan.Windows }
+    Add-BoardRun -Windows $opened -Seconds $elapsed -Desktops $desktops -Forced:([bool]$Force)
+    Add-Log ("Leaderboard: run #{0} - {1} window(s) in {2}" -f $script:Board.Runs.Count, $opened, (Format-BoardDuration $elapsed)) 'quiet' 'App'
+
     $script:State.DesktopsCreated = 0
     $script:State.Plan = $null
+    $script:State.StartedAt = $null
     Set-UiRunning $false
     Set-Status 'Idle'
 }
@@ -1495,6 +1632,28 @@ if ($SelfTest) {
     Start-UpdateCheck
     [System.Windows.Forms.Application]::DoEvents()
     Write-Host ("SelfTest: older manifest -> state={0} arrowVisible={1} button='{2}'" -f $script:UpdateCheck.State, $updateArrow.Visible, $updateButton.Text)
+
+    # Visible is only meaningful once the page itself is shown.
+    Show-Page -Key 'Leaderboard'
+    $hadBoardFile = Test-Path -LiteralPath $script:BoardPath
+    $savedBoardRuns = @($script:Board.Runs)
+
+    $script:Board.Runs = @()
+    Update-Board
+    Write-Host ("SelfTest: empty board -> runs={0} emptyVisible={1} row0Hidden={2}" -f $script:UI.BoardStatValues['Runs'].Text, $script:UI.BoardEmpty.Visible, (-not $script:UI.BoardRows[0]['Back'].Visible))
+
+    Add-BoardRun -Windows 12 -Seconds 95 -Desktops 3 -Forced $false
+    Add-BoardRun -Windows 8 -Seconds 300 -Desktops 2 -Forced $true
+    Write-Host ("SelfTest: board -> runs={0} best={1} longest={2} totalWindows={3}" -f $script:UI.BoardStatValues['Runs'].Text, $script:UI.BoardStatValues['Best'].Text, $script:UI.BoardStatValues['Longest'].Text, $script:UI.BoardStatValues['Windows'].Text)
+    Write-Host ("SelfTest: board row0='{0}' shown={1} unusedRowHidden={2} emptyHidden={3}" -f $script:UI.BoardRows[0]['When'].Text, $script:UI.BoardRows[0]['Back'].Visible, (-not $script:UI.BoardRows[2]['Back'].Visible), (-not $script:UI.BoardEmpty.Visible))
+
+    $script:Board.Runs = @()
+    Import-Board
+    Write-Host ("SelfTest: board saved to disk -> runs={0} newestWindows={1} newestForced={2}" -f @($script:Board.Runs).Count, @($script:Board.Runs)[0].Windows, @($script:Board.Runs)[0].Forced)
+
+    $script:Board.Runs = $savedBoardRuns
+    if ($hadBoardFile) { Save-Board } else { Remove-Item -LiteralPath $script:BoardPath -Force -ErrorAction SilentlyContinue }
+    Update-Board
 
     $script:Opts.UpdateUrl = 'https://api.github.com/repos/dnbdj/rickroll-launcher/releases'
     Start-UpdateCheck

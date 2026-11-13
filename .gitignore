@@ -1,5 +1,6 @@
 # per-machine launcher preferences
 settings.json
+leaderboard.json
 
 # runtime logs
 *.log
