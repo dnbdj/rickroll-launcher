@@ -17,7 +17,7 @@ Requires Windows 10/11 with the built-in PowerShell 5.1, plus Edge, Chrome or Br
 
 - **Prank** — start/stop, force stop, window and duration steppers, and a live summary of the plan
 - **Logs** — timestamped, colour-coded channels (`All`, `App`, `Prank`, `Errors`) with a channel picker
-- **Leaderboard** — local stats from your own runs: how many, best window count, longest session, and the last five, saved in `leaderboard.json`
+- **Leaderboard** — local stats from your own runs: how many, best window count, longest session, and the last five, saved in `leaderboard.json`, with a Reset button
 - **Updates** — checks GitHub for the newest release on launch; press the button to fetch, or the arrow for release notes and other options
 
 A global panic hotkey (**Ctrl+Alt+Q** by default, configurable in the `...` menu) stops the prank from any desktop, including the ones it created.
@@ -32,7 +32,7 @@ The app is `rickroll_mac_gui.py` on Python 3 + tkinter, wrapped by a small launc
 
 It carries the same update check as Windows: on launch it asks GitHub for the newest release, shows your version and whether it is newer, and turns the button into a link to that release when one is available. The check runs off the main thread, so a slow or missing network never freezes the window.
 
-It keeps the same local leaderboard too — runs, best run, longest run, windows opened and the last run — saved in `~/Library/Application Support/Rickroll Launcher/leaderboard.json`.
+It keeps the same local leaderboard too — runs, best run, longest run, windows opened and the last run — saved in `~/Library/Application Support/Rickroll Launcher/leaderboard.json`, with a Reset button to clear it.
 
 If the launcher window ends up buried under eight browser windows, double-click **Force Stop.command** — it sits next to the app in the zip and closes the prank without hunting for the window.
 

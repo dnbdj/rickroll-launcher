@@ -30,9 +30,10 @@ import tempfile
 import threading
 import time
 import tkinter as tk
+from tkinter import messagebox
 from urllib.request import Request, urlopen
 
-APP_VERSION = "1.0.4"
+APP_VERSION = "1.0.5"
 RELEASES_URL = "https://api.github.com/repos/dnbdj/rickroll-launcher/releases"
 
 # The selftest points this at a temp file so it never touches real stats.
@@ -421,8 +422,10 @@ class Launcher(tk.Tk):
             value.pack(anchor="w")
             self.stat_values[key] = value
 
+        self.reset_button = FlatButton(stats_inner, "Reset", self._reset_stats, INNER, STROKE, STROKE, MUTED, (FONT, 9), padx=10, pady=3)
+        self.reset_button.pack(side="right")
         self.recent_label = tk.Label(stats_inner, text="", bg=CARD, fg=MUTED, font=(FONT, 9), anchor="e", justify="right")
-        self.recent_label.pack(side="right", padx=(8, 0))
+        self.recent_label.pack(side="right", padx=(8, 12))
 
         log_card = tk.Frame(self, bg=CARD, highlightbackground=STROKE, highlightthickness=1)
         log_card.pack(fill="both", expand=True, padx=22, pady=(0, 10))
@@ -532,6 +535,14 @@ class Launcher(tk.Tk):
             )
         else:
             self.recent_label.configure(text="No runs yet - stop\nthe prank and it lands here.")
+
+    def _reset_stats(self):
+        if not messagebox.askyesno("Reset leaderboard", "Clear the leaderboard? This cannot be undone."):
+            return
+        self.runs = []
+        self._save_runs([])
+        self._render_stats()
+        self.log("Leaderboard cleared.", "quiet")
 
     # -------------------------------------------------------------- updates
 
@@ -848,6 +859,12 @@ def selftest():
     app.runs = []
     app.runs = app._load_runs()
     print(f"selftest: leaderboard reload -> runs={len(app.runs)} newest={app.runs[0]['Windows']} forced={app.runs[0]['Forced']} at={app.runs[0]['At']}")
+
+    app.runs = []
+    app._save_runs([])
+    app.runs = app._load_runs()
+    app._render_stats()
+    print(f"selftest: leaderboard reset -> runs={app.stat_values['Runs'].cget('text')} stored={len(app._load_runs())} recent='{app.recent_label.cget('text').splitlines()[0]}'")
 
     stats_tmp.unlink(missing_ok=True)
     _STATS_OVERRIDE["path"] = None

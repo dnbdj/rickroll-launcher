@@ -94,7 +94,7 @@ $script:G = @{
     Caret  = [string][char]0x25BE
 }
 
-$script:AppVersion = '1.0.4'
+$script:AppVersion = '1.0.5'
 
 # -------------------------------------------------------------------- widgets
 
@@ -375,6 +375,13 @@ function Add-BoardRun {
     $script:Board.Runs = $runs.ToArray()
     Save-Board
     Update-Board
+}
+
+function Clear-Board {
+    $script:Board.Runs = @()
+    Save-Board
+    Update-Board
+    Add-Log 'Leaderboard cleared.' 'quiet' 'App'
 }
 
 function Update-Board {
@@ -745,6 +752,16 @@ $localBadge = New-Card -X 612 -Y 16 -W 70 -H 22 -Radius 11 -Fill $script:Palette
 $localBadge.Anchor = 'Top,Right'
 $localBadge.Controls.Add((New-Label -Text 'ON THIS PC' -X 0 -Y 0 -W 70 -H 22 -Size 7 -Style Semibold -Color $script:Palette.Muted -Back $script:Palette.Inner -Align 'MiddleCenter'))
 $boardCard.Controls.Add($localBadge)
+
+$boardReset = New-RoundButton -Text 'Reset' -X 526 -Y 16 -W 76 -H 22 -Radius 11 -Fill $script:Palette.Inner -Hover $script:Palette.Hover -Press $script:Palette.Hover -TextColor $script:Palette.Muted -Border $script:Palette.Stroke -Size 8
+$boardReset.Anchor = 'Top,Right'
+$boardReset.add_Click({
+    $answer = [System.Windows.Forms.MessageBox]::Show(
+        'Clear the leaderboard? This cannot be undone.',
+        'Reset leaderboard', [System.Windows.Forms.MessageBoxButtons]::YesNo, [System.Windows.Forms.MessageBoxIcon]::Question)
+    if ($answer -eq [System.Windows.Forms.DialogResult]::Yes) { Clear-Board }
+})
+$boardCard.Controls.Add($boardReset)
 
 $statX = 18
 foreach ($statDef in @(
@@ -1650,6 +1667,9 @@ if ($SelfTest) {
     $script:Board.Runs = @()
     Import-Board
     Write-Host ("SelfTest: board saved to disk -> runs={0} newestWindows={1} newestForced={2}" -f @($script:Board.Runs).Count, @($script:Board.Runs)[0].Windows, @($script:Board.Runs)[0].Forced)
+
+    Clear-Board
+    Write-Host ("SelfTest: board reset -> runs={0} emptyVisible={1} fileRuns={2}" -f $script:UI.BoardStatValues['Runs'].Text, $script:UI.BoardEmpty.Visible, @((Get-Content -Raw -LiteralPath $script:BoardPath | ConvertFrom-Json).Runs).Count)
 
     $script:Board.Runs = $savedBoardRuns
     if ($hadBoardFile) { Save-Board } else { Remove-Item -LiteralPath $script:BoardPath -Force -ErrorAction SilentlyContinue }
