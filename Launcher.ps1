@@ -1669,7 +1669,11 @@ if ($SelfTest) {
     Write-Host ("SelfTest: pages: {0}, nav buttons: {1}" -f $script:UI.Pages.Count, $script:UI.NavButtons.Count)
     Write-Host ("SelfTest: hotkey registered: {0} ({1})" -f $script:UI.HotkeyRegistered, $script:Opts.Hotkey)
 
+        # Pause the pointer watch: where the real cursor happens to be should not
+    # decide what this check measures.
+    $script:NavWatch.Stop()
     Update-NavRail
+    Set-NavExpanded -On:$false
     [System.Windows.Forms.Application]::DoEvents()
     $railNarrow = $sidebar.Width
     $iconText = $script:UI.NavButtons['Leaderboard'].Text
@@ -1677,9 +1681,10 @@ if ($SelfTest) {
     [System.Windows.Forms.Application]::DoEvents()
     $railWide = $sidebar.Width
     $wordText = $script:UI.NavButtons['Leaderboard'].Text
-        $railOverPage = $sidebar.Right -gt $contentHost.Left
+    $railOverPage = $sidebar.Right -gt $contentHost.Left
     Set-NavExpanded -On:$false
     [System.Windows.Forms.Application]::DoEvents()
+    $script:NavWatch.Start()
     Write-Host ("SelfTest: nav rail collapsed={0} expanded={1} icons='{2}' words='{3}' overlapsPage={4}" -f $railNarrow, $railWide, $iconText, $wordText, $railOverPage)
 
     Show-Page -Key 'Logs'
