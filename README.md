@@ -6,8 +6,8 @@ A prank app. It opens a pile of browser windows with **Never Gonna Give You Up**
 
 Grab the latest build from **[Releases](https://github.com/dnbdj/rickroll-launcher/releases)**.
 
-- **Windows** — `rickroll-launcher-windows-beta1.0.zip`. Unzip and run `Launcher.cmd`.
-- **macOS** — `rickroll-launcher-macos-beta1.1.zip`. Unzip and double-click **Rickroll Launcher.app** (first time: right-click → **Open**).
+- **Windows** — `rickroll-launcher-windows-*.zip`. Unzip and run `Launcher.cmd`.
+- **macOS** — `rickroll-launcher-macos-*.zip`. Unzip and double-click **Rickroll Launcher.app** (first time: right-click → **Open**).
 
 ## Windows
 

@@ -30,7 +30,7 @@ import time
 import tkinter as tk
 from urllib.request import Request, urlopen
 
-APP_VERSION = "1.0.1"
+APP_VERSION = "1.0.2"
 RELEASES_URL = "https://api.github.com/repos/dnbdj/rickroll-launcher/releases"
 VIDEO_URL = "https://www.youtube.com/watch?v=dQw4w9WgXcQ&autoplay=1"
 
@@ -590,9 +590,18 @@ def selftest():
     ]
     found = newest_release(sample)
     print(f"selftest: newest release -> {found['label']} (draft skipped: {found['label'] == '1.0.1-beta'})")
+    # Expectations are derived from APP_VERSION so bumping it cannot break this.
     problems = []
-    for tag, expected in (("v1.0.2-beta", True), ("1.0.1", False), ("v1.0", False), ("v1.0.0", False), ("v2", True)):
-        newer = version_tuple(tag) > version_tuple(APP_VERSION)
+    base = version_tuple(APP_VERSION)
+    bumped = ".".join(str(part) for part in (base[:-1] + (base[-1] + 1,)))
+    for tag, expected in (
+        (f"v{bumped}-beta", True),
+        (f"v{APP_VERSION}", False),
+        (f"v{APP_VERSION}-beta", False),
+        ("v0.0.1", False),
+        ("v99", True),
+    ):
+        newer = version_tuple(tag) > base
         if newer != expected:
             problems.append(f"{tag} newer than {APP_VERSION} gave {newer}, expected {expected}")
         print(f"selftest: {tag} newer than {APP_VERSION}: {newer} (expected {expected}, {'ok' if newer == expected else 'WRONG'})")
