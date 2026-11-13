@@ -1312,6 +1312,17 @@ def selftest():
     print(f"selftest: nav rail overlay={app.nav.winfo_manager() == 'place'} collapsed={narrow} expanded={wide} "
           f"icons={icons} words={words}")
 
+    # The rail has to hold the longest expanded label, "⚙  Settings" included.
+    from tkinter import font as tkfont
+    nav_font = tkfont.Font(root=app, family=FONT, size=13)
+    labels = {key: f"{glyph}  {key}" for key, glyph in app.nav_glyphs.items()}
+    widest = max(labels.values(), key=nav_font.measure)
+    needed = nav_font.measure(widest)
+    settings_needed = nav_font.measure(f"{app.nav_glyphs['Settings']}  Settings")
+    available = NAV_WIDTH - 24
+    print(f"selftest: nav labels widest={widest!r} needs={needed}px settings={settings_needed}px "
+          f"available={available}px fits={needed <= available}")
+
     app._show_page("Settings")
     app._set_settings_tab("Experimental")
     app.update()

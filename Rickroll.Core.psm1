@@ -91,7 +91,8 @@ function Open-RickrollWindow {
     param(
         [string]$BrowserPath,
         [Parameter(Mandatory)][string]$ProfileDir,
-        [Parameter(Mandatory)][string]$Url
+        [Parameter(Mandatory)][string]$Url,
+        [bool]$Maximise = $true
     )
 
     if ($BrowserPath) {
@@ -100,12 +101,12 @@ function Open-RickrollWindow {
             ('--user-data-dir="{0}"' -f $ProfileDir),
             '--no-first-run',
             '--no-default-browser-check',
-            '--start-maximized',
             '--disable-sync',
             '--autoplay-policy=no-user-gesture-required',
             '--disable-features=msEdgeFirstRunExperience,Translate',
             ('"{0}"' -f $Url)
         )
+        if ($Maximise) { $arguments = @('--start-maximized') + $arguments }
         Start-Process -FilePath $BrowserPath -ArgumentList $arguments | Out-Null
     }
     else {
@@ -198,6 +199,7 @@ function New-RickrollPlan {
         [int]$Desktops = 3,
         [int]$DelayMs = 800,
         [string]$Url = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ&autoplay=1',
+        [bool]$Maximise = $true,
         [switch]$NoVirtualDesktops
     )
 
@@ -227,6 +229,7 @@ function New-RickrollPlan {
         Desktops          = $Desktops
         DelayMs           = $DelayMs
         Url               = $Url
+        Maximise          = [bool]$Maximise
         NoVirtualDesktops = [bool]$NoVirtualDesktops
         Slots             = $perSlot
         NewDesktops       = [Math]::Max(0, $usedSlots.Count - 1)
@@ -295,7 +298,7 @@ function Invoke-RickrollStep {
             Write-PrankLog -OnLog $OnLog -Level 'info' -Message ("Created virtual desktop {0} of {1}" -f $Step.Number, $Step.Total)
         }
         'window' {
-            Open-RickrollWindow -BrowserPath $Plan.BrowserPath -ProfileDir $Plan.ProfileDir -Url $Plan.Url
+            Open-RickrollWindow -BrowserPath $Plan.BrowserPath -ProfileDir $Plan.ProfileDir -Url $Plan.Url -Maximise ([bool]$Plan.Maximise)
             Write-PrankLog -OnLog $OnLog -Level 'info' -Message ("Opened window {0} of {1}" -f $Step.Number, $Step.Total)
         }
         default {

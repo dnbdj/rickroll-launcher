@@ -283,6 +283,7 @@ $script:Opts = @{
     UpdateOnLaunch = $true
     Hotkey       = 'Ctrl+Alt+Q'
     KeepDesktops = $false
+    Maximise       = $true
     UpdateUrl    = 'https://api.github.com/repos/dnbdj/rickroll-launcher/releases'
 }
 
@@ -326,7 +327,7 @@ function Import-Settings {
     if (-not (Test-Path -LiteralPath $script:SettingsPath)) { return }
     try {
         $saved = Get-Content -Raw -LiteralPath $script:SettingsPath | ConvertFrom-Json
-        foreach ($key in @('Windows', 'Desktops', 'Hotkey', 'KeepDesktops', 'UpdateUrl', 'LoopVideo', 'RandomStart', 'DryRun', 'UpdateOnLaunch')) {
+        foreach ($key in @('Windows', 'Desktops', 'Hotkey', 'KeepDesktops', 'UpdateUrl', 'LoopVideo', 'RandomStart', 'DryRun', 'UpdateOnLaunch', 'Maximise')) {
             if ($saved.PSObject.Properties.Name -contains $key) { $script:Opts[$key] = $saved.$key }
         }
     }
@@ -1073,7 +1074,7 @@ function New-SettingsToggle {
 
 $generalPane = $script:UI.SettingsPanes['General']
 New-SettingsToggle -Pane $generalPane -Key 'UpdateOnLaunch' -Title 'Check for updates on launch' -Blurb 'Asks GitHub for the newest release when the launcher opens.' -Y 4
-New-SettingsToggle -Pane $generalPane -Key 'KeepDesktops' -Title 'Keep desktops after stop' -Blurb 'Leave the extra virtual desktops behind instead of closing them.' -Y 76
+New-SettingsToggle -Pane $generalPane -Key 'Maximise' -Title 'Open prank windows maximised' -Blurb 'Full screen the browser window in each desktop; off leaves them windowed.' -Y 76
 
 $experimentalPane = $script:UI.SettingsPanes['Experimental']
 New-SettingsToggle -Pane $experimentalPane -Key 'LoopVideo' -Title 'Loop the video' -Blurb 'Adds loop=1 so the song never stops between windows.' -Y 4
@@ -1216,7 +1217,7 @@ function Set-UiRunning {
 }
 
 function Update-PlanInfo {
-    $plan = New-RickrollPlan -Windows $script:Opts.Windows -Desktops $script:Opts.Desktops -DelayMs 800 -Url (Get-PrankUrl)
+    $plan = New-RickrollPlan -Windows $script:Opts.Windows -Desktops $script:Opts.Desktops -DelayMs 800 -Url (Get-PrankUrl) -Maximise ([bool]$script:Opts.Maximise)
     if ($plan.NewDesktops -gt 0) {
         $script:UI.PlanValue.Text = ("{0} windows across {1} desktops ({2} new)" -f $plan.Windows, $plan.TotalDesktops, $plan.NewDesktops)
     }
@@ -1285,7 +1286,7 @@ $script:LogHandler = {
 function Start-Prank {
     if ($script:State.Running) { return }
 
-    $plan = New-RickrollPlan -Windows $script:Opts.Windows -Desktops $script:Opts.Desktops -DelayMs 800 -Url (Get-PrankUrl)
+    $plan = New-RickrollPlan -Windows $script:Opts.Windows -Desktops $script:Opts.Desktops -DelayMs 800 -Url (Get-PrankUrl) -Maximise ([bool]$script:Opts.Maximise)
     $steps = @(Get-RickrollStep -Plan $plan)
     if ($steps.Count -eq 0) {
         Add-Log 'Nothing to do - raise the window count first.' 'warn'
@@ -1937,6 +1938,19 @@ if ($SelfTest) {
     $script:NavWatch.Start()
     Write-Host ("SelfTest: nav rail collapsed={0} mid={1} expanded={2} icons='{3}' words='{4}' overlapsPage={5}" -f $railNarrow, $railMid, $railWide, $iconText, $wordText, $railOverPage)
 
+    # The rail has to hold the longest expanded label, the Settings one included.
+    $navFont = Get-UiFont -Size 11 -Style Regular
+    $widestLabel = ''
+    $labelWidth = 0
+    foreach ($key in @($script:UI.NavGlyphs.Keys)) {
+        $probe = "{0}  {1}" -f $script:UI.NavGlyphs[$key], $key
+        $measured = [System.Windows.Forms.TextRenderer]::MeasureText($probe, $navFont).Width
+        if ($measured -gt $labelWidth) { $labelWidth = $measured; $widestLabel = $probe }
+    }
+    $labelButton = (U 148)
+    $settingsWidth = [System.Windows.Forms.TextRenderer]::MeasureText(("{0}  Settings" -f $script:UI.NavGlyphs['Settings']), $navFont).Width
+    Write-Host ("SelfTest: nav labels widest='{0}' needs={1}px settings={2}px button={3}px fits={4}" -f $widestLabel, $labelWidth, $settingsWidth, $labelButton, ($labelWidth -le $labelButton))
+
     Show-Page -Key 'Settings'
     Set-SettingsTab -Name 'Experimental'
     [System.Windows.Forms.Application]::DoEvents()
@@ -1952,6 +1966,12 @@ if ($SelfTest) {
     $tabsVisible = 0
     foreach ($name in @($script:UI.SettingsPanes.Keys)) { if ($script:UI.SettingsPanes[$name].Visible) { $tabsVisible++ } }
     Write-Host ("SelfTest: settings tabs={0} panes={1} visiblePanes={2} activeTab={3} dryRun {4}->{5} loopUrlEnds={6}" -f $script:UI.SettingsTabs.Count, $script:UI.SettingsPanes.Count, $tabsVisible, $script:UI.SettingsTab, $dryBefore, $dryAfter, $loopUrl.EndsWith('&loop=1&playlist=dQw4w9WgXcQ'))
+
+    $planOn = New-RickrollPlan -Windows 2 -Desktops 1 -Maximise ([bool]$script:Opts.Maximise)
+    $script:Opts.Maximise = $false
+    $planOff = New-RickrollPlan -Windows 2 -Desktops 1 -Maximise ([bool]$script:Opts.Maximise)
+    $script:Opts.Maximise = $true
+    Write-Host ("SelfTest: plan maximise on={0} off={1}" -f $planOn.Maximise, $planOff.Maximise)
 
     Show-Page -Key 'Logs'
     [System.Windows.Forms.Application]::DoEvents()
