@@ -94,7 +94,7 @@ $script:G = @{
     Caret  = [string][char]0x25BE
 }
 
-$script:AppVersion = '1.0.6'
+$script:AppVersion = '1.0.7'
 
 # -------------------------------------------------------------------- widgets
 
@@ -284,6 +284,7 @@ $script:UI = @{
     NavButtons       = @{}
     CurrentPage      = 'Prank'
     HotkeyRegistered = $false
+    NavGlyphs        = @{}
     NavBar           = $null
     BoardRows        = @()
     BoardStatValues  = @{}
@@ -451,9 +452,16 @@ $contentHost = New-Object System.Windows.Forms.Panel
 $contentHost.Dock = [System.Windows.Forms.DockStyle]::Fill
 $contentHost.BackColor = ToColor $script:Palette.Bg
 
+# The rail is a fixed strip; the nav floats above it so the labels can widen
+# over the page instead of reflowing it.
+$navRail = New-Object System.Windows.Forms.Panel
+$navRail.Dock = [System.Windows.Forms.DockStyle]::Left
+$navRail.Width = (U 64)
+$navRail.BackColor = ToColor $script:Palette.Sidebar
+
 $sidebar = New-Object System.Windows.Forms.Panel
-$sidebar.Dock = [System.Windows.Forms.DockStyle]::Left
-$sidebar.Width = (U 168)
+$sidebar.Dock = [System.Windows.Forms.DockStyle]::None
+$sidebar.Width = (U 64)
 $sidebar.BackColor = ToColor $script:Palette.Sidebar
 
 $statusBar = New-Object System.Windows.Forms.Panel
@@ -467,9 +475,10 @@ $titleBar.Height = (U 52)
 $titleBar.BackColor = ToColor $script:Palette.Bg
 
 $form.Controls.Add($contentHost)
-$form.Controls.Add($sidebar)
+$form.Controls.Add($navRail)
 $form.Controls.Add($statusBar)
 $form.Controls.Add($titleBar)
+$form.Controls.Add($sidebar)
 $form.PerformLayout()
 Update-FormRegion
 
@@ -562,27 +571,90 @@ $navItems = @(
 
 $navIndex = 0
 foreach ($navItem in $navItems) {
-    $navButton = New-RoundButton -Text ("{0}  {1}" -f $navItem.Glyph, $navItem.Key) -X 14 -Y (14 + ($navIndex * 44)) -W 140 -H 38 -Radius 10 -Fill $script:Palette.Sidebar -Hover $script:Palette.Hover -Press $script:Palette.Hover -TextColor $script:Palette.Muted -Size 9.5
+    # Icon only; Set-NavExpanded adds the word while the pointer is on the rail.
+    $navButton = New-RoundButton -Text ([string]$navItem.Glyph) -X 10 -Y (14 + ($navIndex * 44)) -W 44 -H 38 -Radius 10 -Fill $script:Palette.Sidebar -Hover $script:Palette.Hover -Press $script:Palette.Hover -TextColor $script:Palette.Muted -Size 11
     $navButton.Tag = $navItem.Key
     $navButton.add_Click({
         param($sender, $e)
         Show-Page -Key ([string]$sender.Tag)
+        $script:NavSuppressed = $true
+        Set-NavExpanded -On:$false
     })
     $sidebar.Controls.Add($navButton)
     $script:UI.NavButtons[$navItem.Key] = $navButton
+    $script:UI.NavGlyphs[$navItem.Key] = [string]$navItem.Glyph
     $navIndex++
 }
 
-$script:UI.NavBar = New-Card -X 5 -Y 24 -W 3 -H 18 -Radius 2 -Fill $script:Palette.Accent -Border ''
+$script:UI.NavBar = New-Card -X 4 -Y 24 -W 3 -H 18 -Radius 2 -Fill $script:Palette.Accent -Border ''
 $sidebar.Controls.Add($script:UI.NavBar)
 
-$menuButton = New-RoundButton -Text '...' -X 14 -Y ($sidebar.Height - (U 84)) -W 140 -H 32 -Radius 9 -Fill $script:Palette.Sidebar -Hover $script:Palette.Hover -Press $script:Palette.Hover -TextColor $script:Palette.Muted -Size 11 -Style Bold
-$menuButton.Anchor = 'Bottom,Left'
+$menuButton = New-RoundButton -Text '...' -X 10 -Y ($sidebar.Height - (U 84)) -W 44 -H 32 -Radius 9 -Fill $script:Palette.Sidebar -Hover $script:Palette.Hover -Press $script:Palette.Hover -TextColor $script:Palette.Muted -Size 11 -Style Bold
 $sidebar.Controls.Add($menuButton)
 
-$sidebarVersion = New-Label -Text ("v{0}" -f $script:AppVersion) -X 14 -Y ($sidebar.Height - (U 46)) -W 140 -H 20 -Size 7.5 -Color $script:Palette.Muted -Back $script:Palette.Sidebar -Align 'MiddleCenter'
-$sidebarVersion.Anchor = 'Bottom,Left'
+$sidebarVersion = New-Label -Text ("v{0}" -f $script:AppVersion) -X 10 -Y ($sidebar.Height - (U 46)) -W 44 -H 20 -Size 7.5 -Color $script:Palette.Muted -Back $script:Palette.Sidebar -Align 'MiddleCenter'
 $sidebar.Controls.Add($sidebarVersion)
+
+# --- nav rail: icons at rest, words while hovered --------------------------
+
+$script:NavExpanded = $false
+# A click collapses the rail even though the pointer is still on it; the next
+# time the pointer leaves, that suppression clears.
+$script:NavSuppressed = $false
+
+function Update-NavRail {
+    if ($null -eq $sidebar) { return }
+    $height = $form.ClientSize.Height - $titleBar.Height - $statusBar.Height
+    if ($height -lt 1) { return }
+    $sidebar.Bounds = [System.Drawing.Rectangle]::new(0, $titleBar.Height, $sidebar.Width, $height)
+    $menuButton.Top = $sidebar.ClientSize.Height - (U 84)
+    $sidebarVersion.Top = $sidebar.ClientSize.Height - (U 46)
+    $sidebar.BringToFront()
+}
+
+function Test-NavHover {
+    $point = [System.Windows.Forms.Cursor]::Position
+    $rect = $sidebar.RectangleToScreen($sidebar.ClientRectangle)
+    return $rect.Contains($point)
+}
+
+function Set-NavExpanded {
+    param([switch]$On)
+    if ([bool]$On -eq $script:NavExpanded) { return }
+    $script:NavExpanded = [bool]$On
+
+    $inset = if ($On) { (U 14) } else { (U 10) }
+    $buttonWidth = if ($On) { (U 148) } else { (U 44) }
+    foreach ($key in @($script:UI.NavButtons.Keys)) {
+        $button = $script:UI.NavButtons[$key]
+        $glyph = $script:UI.NavGlyphs[$key]
+        $button.Text = if ($On) { ("{0}  {1}" -f $glyph, $key) } else { $glyph }
+        $button.Bounds = [System.Drawing.Rectangle]::new($inset, $button.Top, $buttonWidth, $button.Height)
+        $button.Invalidate()
+    }
+
+    $menuButton.Left = $inset
+    $menuButton.Width = $buttonWidth
+    $sidebarVersion.Left = $inset
+    $sidebarVersion.Width = $buttonWidth
+    $script:UI.NavBar.Left = if ($On) { (U 5) } else { (U 4) }
+
+    $sidebar.Width = if ($On) { (U 176) } else { (U 64) }
+    Update-NavRail
+}
+
+# Watching the pointer beats MouseEnter/MouseLeave here: moving between the
+# rail and its own buttons fires leave on the panel, and leaving a button
+# straight out of the window may fire nothing at all.
+$script:NavWatch = New-Object System.Windows.Forms.Timer
+$script:NavWatch.Interval = 120
+$script:NavWatch.add_Tick({
+    $hovered = Test-NavHover
+    if (-not $hovered) { $script:NavSuppressed = $false }
+    $want = $hovered -and (-not $script:NavSuppressed)
+    if ($want -ne $script:NavExpanded) { Set-NavExpanded -On:$want }
+})
+$script:NavWatch.Start()
 
 # --- status bar ---
 
@@ -1579,6 +1651,7 @@ $closeButton.add_Click({ $form.Close() })
 $form.add_Resize({
     Update-FormRegion
     if ($form.WindowState -eq [System.Windows.Forms.FormWindowState]::Minimized) { return }
+    Update-NavRail
     if ($logBox -and $script:UI.Pages['Logs'].Visible) { Update-LogView }
 })
 
@@ -1593,6 +1666,7 @@ Register-PanicHotkey
 Show-Page -Key 'Prank'
 
 $form.add_Shown({
+    Update-NavRail
     Add-Log 'Launcher ready.' 'quiet' 'App'
     Add-Log ("Prank profile: {0}" -f (Get-RickrollProfileDir)) 'quiet' 'App'
     Set-Status 'Idle'
@@ -1617,6 +1691,19 @@ if ($SelfTest) {
     Write-Host ("SelfTest: menu items: {0}" -f $testMenu.Items.Count)
     Write-Host ("SelfTest: pages: {0}, nav buttons: {1}" -f $script:UI.Pages.Count, $script:UI.NavButtons.Count)
     Write-Host ("SelfTest: hotkey registered: {0} ({1})" -f $script:UI.HotkeyRegistered, $script:Opts.Hotkey)
+
+    Update-NavRail
+    [System.Windows.Forms.Application]::DoEvents()
+    $railNarrow = $sidebar.Width
+    $iconText = $script:UI.NavButtons['Leaderboard'].Text
+    Set-NavExpanded -On
+    [System.Windows.Forms.Application]::DoEvents()
+    $railWide = $sidebar.Width
+    $wordText = $script:UI.NavButtons['Leaderboard'].Text
+        $railOverPage = $sidebar.Right -gt $contentHost.Left
+    Set-NavExpanded -On:$false
+    [System.Windows.Forms.Application]::DoEvents()
+    Write-Host ("SelfTest: nav rail collapsed={0} expanded={1} icons='{2}' words='{3}' overlapsPage={4}" -f $railNarrow, $railWide, $iconText, $wordText, $railOverPage)
 
     Show-Page -Key 'Logs'
     [System.Windows.Forms.Application]::DoEvents()

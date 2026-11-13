@@ -33,7 +33,7 @@ import tkinter as tk
 from tkinter import messagebox
 from urllib.request import Request, urlopen
 
-APP_VERSION = "1.0.6"
+APP_VERSION = "1.0.7"
 RELEASES_URL = "https://api.github.com/repos/dnbdj/rickroll-launcher/releases"
 
 # The selftest points this at a temp file so it never touches real stats.
@@ -58,6 +58,10 @@ ACCENT_HI = "#FF4E8B"
 ACCENT_LO = "#D6215E"
 LIVE_BG = "#241C2C"
 LIVE_LINE = "#4A2340"
+SIDEBAR_BG = "#0B0C12"
+# The nav is an icon rail that widens over the page while the pointer is on it.
+RAIL_WIDTH = 64
+NAV_WIDTH = 200
 DANGER = "#FF6B6B"
 DANGER_BG = "#2A1B22"
 
@@ -388,21 +392,11 @@ class Launcher(tk.Tk):
         shell = tk.Frame(self, bg=BG)
         shell.pack(fill="both", expand=True)
 
-        sidebar = tk.Frame(shell, bg="#0B0C12", width=156)
-        sidebar.pack(side="left", fill="y")
-        sidebar.pack_propagate(False)
-
-        brand = tk.Frame(sidebar, bg="#0B0C12")
-        brand.pack(fill="x", padx=14, pady=(18, 2))
-        tk.Label(brand, text="Rickroll", bg="#0B0C12", fg=TEXT, font=(FONT, 17, "bold")).pack(anchor="w")
-        tk.Label(brand, text=f"macOS beta {APP_VERSION}", bg="#0B0C12", fg=MUTED, font=(FONT, 9)).pack(anchor="w")
-
-        self.nav_buttons = {}
-        for key, glyph in (("Prank", "\u25b6"), ("Logs", "\u2261"), ("Leaderboard", "\u2605"), ("Updates", "\u21bb")):
-            button = FlatButton(sidebar, f"{glyph}  {key}", lambda name=key: self._show_page(name),
-                                "#0B0C12", INNER, INNER, MUTED, (FONT, 11), padx=10, pady=7)
-            button.pack(fill="x", padx=10, pady=2)
-            self.nav_buttons[key] = button
+        # The rail is only a strip. The nav floats on top of it, so the words
+        # slide out over the page instead of shoving the page sideways.
+        rail = tk.Frame(shell, bg=SIDEBAR_BG, width=RAIL_WIDTH)
+        rail.pack(side="left", fill="y")
+        rail.pack_propagate(False)
 
         content = tk.Frame(shell, bg=BG)
         content.pack(side="left", fill="both", expand=True)
@@ -429,7 +423,41 @@ class Launcher(tk.Tk):
         self._build_logs_page(self.pages["Logs"])
         self._build_board_page(self.pages["Leaderboard"])
         self._build_updates_page(self.pages["Updates"])
+
+        # Built last so the expanding nav draws over the pages, not under them.
+        self._build_nav(shell)
         self._show_page("Prank")
+
+    def _build_nav(self, shell):
+        self.nav = tk.Frame(shell, bg=SIDEBAR_BG)
+        self.nav.place(x=0, y=0, width=RAIL_WIDTH, relheight=1)
+        self.nav_expanded = False
+        self._nav_job = None
+
+        brand = tk.Frame(self.nav, bg=SIDEBAR_BG)
+        brand.pack(fill="x", padx=14, pady=(18, 10))
+        self.brand_title = tk.Label(brand, text="R", bg=SIDEBAR_BG, fg=ACCENT,
+                                    font=(FONT, 17, "bold"), cursor="hand2")
+        self.brand_title.pack(anchor="w")
+        self.brand_sub = tk.Label(brand, text=f"macOS beta {APP_VERSION}", bg=SIDEBAR_BG,
+                                  fg=MUTED, font=(FONT, 9), cursor="hand2")
+
+        self.nav_glyphs = {"Prank": "\u25b6", "Logs": "\u2261", "Leaderboard": "\u2605", "Updates": "\u21bb"}
+        self.nav_buttons = {}
+        for key, glyph in self.nav_glyphs.items():
+            button = FlatButton(self.nav, glyph, lambda name=key: self._nav_click(name),
+                                SIDEBAR_BG, INNER, INNER, MUTED, (FONT, 13), padx=10, pady=9)
+            button._label.configure(anchor="center")
+            button.pack(fill="x", padx=10, pady=2)
+            self.nav_buttons[key] = button
+
+        self.nav.lift()
+        hoverable = [self.nav, self.brand_title, self.brand_sub]
+        for button in self.nav_buttons.values():
+            hoverable.extend([button, button._label])
+        for widget in hoverable:
+            widget.bind("<Enter>", self._nav_enter, add="+")
+            widget.bind("<Leave>", self._nav_leave, add="+")
 
     def _show_page(self, key):
         page = self.pages.get(key)
@@ -439,8 +467,57 @@ class Launcher(tk.Tk):
         page.tkraise()
         for name, button in self.nav_buttons.items():
             active = (name == key)
-            button.set_colors(INNER if active else "#0B0C12", INNER, INNER, ACCENT if active else MUTED)
+            button.set_colors(INNER if active else SIDEBAR_BG, INNER, INNER, ACCENT if active else MUTED)
             button.set_enabled(True)
+
+    # ------------------------------------------------------------ nav rail
+
+    def _nav_click(self, key):
+        self._show_page(key)
+        self._set_nav(False)
+
+    def _nav_enter(self, _event=None):
+        if self._nav_job is not None:
+            self.after_cancel(self._nav_job)
+            self._nav_job = None
+        self._set_nav(True)
+
+    def _nav_leave(self, _event=None):
+        if self._nav_job is not None:
+            self.after_cancel(self._nav_job)
+        # Tk fires <Leave> when the pointer moves between the rail and its own
+        # buttons, so ask where the pointer actually is before collapsing.
+        self._nav_job = self.after(130, self._nav_settle)
+
+    def _nav_settle(self):
+        self._nav_job = None
+        if not self._pointer_in_nav():
+            self._set_nav(False)
+
+    def _pointer_in_nav(self):
+        widget = self.nav.winfo_containing(self.winfo_pointerx(), self.winfo_pointery())
+        while widget is not None:
+            if widget is self.nav:
+                return True
+            widget = widget.master
+        return False
+
+    def _set_nav(self, expanded):
+        expanded = bool(expanded)
+        if expanded == self.nav_expanded:
+            return
+        self.nav_expanded = expanded
+        self.nav.place_configure(width=NAV_WIDTH if expanded else RAIL_WIDTH)
+        self.nav.lift()
+        for key, button in self.nav_buttons.items():
+            button.set_text(f"{self.nav_glyphs[key]}  {key}" if expanded else self.nav_glyphs[key])
+            button._label.configure(anchor="w" if expanded else "center")
+            button.pack_configure(padx=12 if expanded else 10)
+        self.brand_title.configure(text="Rickroll" if expanded else "R", anchor="w" if expanded else "center")
+        if expanded:
+            self.brand_sub.pack(anchor="w")
+        else:
+            self.brand_sub.pack_forget()
 
     def _build_prank_page(self, page):
         header = tk.Frame(page, bg=BG)
@@ -986,6 +1063,17 @@ def selftest():
     for page in ("Prank", "Logs", "Leaderboard", "Updates"):
         app._show_page(page)
     print(f"selftest: pages {sorted(app.pages)} nav {sorted(app.nav_buttons)} current={app.current_page}")
+
+    app._set_nav(True)
+    app.update()
+    wide = app.nav.winfo_width()
+    words = [button._label.cget("text") for button in app.nav_buttons.values()]
+    app._set_nav(False)
+    app.update()
+    narrow = app.nav.winfo_width()
+    icons = [button._label.cget("text") for button in app.nav_buttons.values()]
+    print(f"selftest: nav rail overlay={app.nav.winfo_manager() == 'place'} collapsed={narrow} expanded={wide} "
+          f"icons={icons} words={words}")
 
     app.log("selftest app line", "info", "App")
     app.log("selftest prank line", "info", "Prank")
