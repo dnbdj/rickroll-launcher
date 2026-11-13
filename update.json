@@ -1,5 +1,5 @@
 {
-  "version": "1.0.2",
+  "version": "1.0.3",
   "url": "https://github.com/dnbdj/rickroll-launcher/releases/latest",
-  "notes": "The Windows leaderboard now records real runs, and every release is built and verified by CI."
+  "notes": "The Mac download can now tell you why it did not start, and stops itself with one double-click."
 }

@@ -21,8 +21,8 @@ import re
 import sys
 import zipfile
 
-VERSION = "1.0.2"
-LABEL = "1.0.2"
+VERSION = "1.0.3"
+LABEL = "1.0.3"
 
 WINDOWS_FILES = [
     "Launcher.ps1",
@@ -36,6 +36,7 @@ WINDOWS_FILES = [
 ]
 
 MAC_EXECUTABLES = [
+    "Force Stop.command",
     "Rickroll Launcher.app/Contents/MacOS/launch",
     "Rickroll Launcher.app/Contents/Resources/rickroll_mac_gui.py",
     "Rickroll Launcher.app/Contents/Resources/rickroll-mac.sh",
@@ -99,6 +100,28 @@ done
 exec /usr/bin/open -a Terminal "$RES/rickroll-mac.sh"
 """
 
+FORCE_STOP_NAME = "Force Stop.command"
+
+FORCE_STOP = """#!/bin/bash
+# Double-click this when the launcher window is buried under prank windows.
+# .command files are opened by Terminal, so this needs no install step.
+HERE="$(cd "$(dirname "$0")" && pwd)"
+STOP="$HERE/Rickroll Launcher.app/Contents/Resources/stop-rickroll-mac.sh"
+
+if [ ! -f "$STOP" ]; then
+  echo "Could not find Rickroll Launcher.app next to this file."
+  echo "Keep the app and this script in the same folder."
+  printf 'Press return to close.'
+  read -r _
+  exit 1
+fi
+
+bash "$STOP"
+printf '\\nPress return to close.'
+read -r _ || true
+exit 0
+"""
+
 MAC_README = """Rickroll Launcher - macOS beta {label}
 ====================================
 
@@ -125,9 +148,26 @@ What it needs
 
 Stopping
 --------
-"Force stop" in the window, or just close the window, or from a terminal:
-    bash stop-rickroll-mac.sh
+"Force stop" in the window, or just close the window. If the launcher window is
+buried under prank windows, double-click "Force Stop.command" next to the app:
+it closes them, says so, and waits for you to press return.
+
+From a terminal:
+    bash "Rickroll Launcher.app/Contents/Resources/stop-rickroll-mac.sh"
+
 It also stops itself after the number of seconds you set.
+
+Nothing happened when I opened it
+---------------------------------
+The app is unsigned, so macOS can refuse it - see "First launch only" above.
+If it still does nothing, run this in Terminal and send the file it saves to
+your Desktop:
+
+    python3 "Rickroll Launcher.app/Contents/Resources/rickroll_mac_gui.py" --diagnose
+
+That prints your macOS and Python versions, whether the bundle's files are
+executable, which browsers it can find, whether the download is quarantined,
+and whether GitHub has a newer release.
 
 One limitation
 --------------
@@ -194,6 +234,7 @@ def build_macos(root, out, version, label):
             (root / "stop-rickroll-mac.sh").read_bytes(), 0o755)
         add(zf, f"{app}/Contents/Resources/README.txt",
             MAC_README.format(label=label).encode(), 0o644)
+        add(zf, FORCE_STOP_NAME, FORCE_STOP.encode(), 0o755)
     return path
 
 

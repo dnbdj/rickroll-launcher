@@ -21,6 +21,8 @@ Requires: Google Chrome, Brave, Edge or Chromium installed.
 
 import json
 import os
+import pathlib
+import platform
 import shutil
 import subprocess
 import sys
@@ -30,7 +32,7 @@ import time
 import tkinter as tk
 from urllib.request import Request, urlopen
 
-APP_VERSION = "1.0.2"
+APP_VERSION = "1.0.3"
 RELEASES_URL = "https://api.github.com/repos/dnbdj/rickroll-launcher/releases"
 VIDEO_URL = "https://www.youtube.com/watch?v=dQw4w9WgXcQ&autoplay=1"
 
@@ -104,6 +106,107 @@ def fetch_releases(url=RELEASES_URL, timeout=10):
     })
     with urlopen(request, timeout=timeout) as response:
         return json.loads(response.read().decode("utf-8"))
+
+
+def collect_diagnostics():
+    """Everything that could explain "nothing happens" on a Mac.
+
+    Plain text, so it can be pasted into a chat. Deliberately opens no windows
+    and needs no display.
+    """
+    lines = []
+
+    def add(text=""):
+        lines.append(text)
+
+    add(f"Rickroll Launcher {APP_VERSION} - diagnostics")
+    add(f"when           : {time.strftime('%Y-%m-%d %H:%M:%S')}")
+    mac_version = platform.mac_ver()[0]
+    add(f"macOS          : {mac_version or 'not macOS (' + platform.system() + ')'}")
+    add(f"machine        : {platform.machine()}")
+    add(f"python         : {sys.version.split()[0]} at {sys.executable}")
+
+    try:
+        import tkinter as _tk
+        add(f"tkinter        : {_tk.TkVersion}")
+    except Exception as exc:  # noqa: BLE001
+        add(f"tkinter        : MISSING ({exc}) - the GUI cannot start, the terminal version still can")
+
+    gui = pathlib.Path(__file__).resolve()
+    add(f"gui script     : {gui}")
+    for name in ("rickroll_mac_gui.py", "rickroll-mac.sh", "stop-rickroll-mac.sh"):
+        path = gui.parent / name
+        state = "ok" if path.exists() else "MISSING"
+        mode = "executable" if os.access(path, os.X_OK) else "NOT executable"
+        add(f"  {name:<24} {state}, {mode}")
+
+    try:
+        app_dir = gui.parents[2]
+    except IndexError:
+        app_dir = None
+    if app_dir is not None and app_dir.suffix == ".app":
+        add(f"bundle         : {app_dir}")
+    else:
+        add("bundle         : not running from a .app (fine if you launched the .py directly)")
+
+    add("browsers       :")
+    for path in BROWSER_PATHS:
+        found = os.path.isfile(path) and os.access(path, os.X_OK)
+        add(f"  {'found  ' if found else 'missing'} {path}")
+    for name in ("google-chrome", "chromium", "brave-browser", "microsoft-edge"):
+        add(f"  which {name}: {shutil.which(name) or 'not found'}")
+
+    try:
+        handle, probe = tempfile.mkstemp(prefix="rickroll-write-test")
+        os.close(handle)
+        os.remove(probe)
+        add(f"temp dir       : {tempfile.gettempdir()} (writable)")
+    except Exception as exc:  # noqa: BLE001
+        add(f"temp dir       : {tempfile.gettempdir()} (NOT writable: {exc})")
+
+    if sys.platform == "darwin" and app_dir is not None:
+        try:
+            result = subprocess.run(
+                ["xattr", "-p", "com.apple.quarantine", str(app_dir)],
+                capture_output=True, text=True, timeout=5, check=False,
+            )
+            value = result.stdout.strip()
+            add(f"quarantine     : {value or 'none'}")
+            if value:
+                add("                 macOS will refuse the first launch until you right-click > Open,")
+                add("                 or clear it with: xattr -dr com.apple.quarantine \"Rickroll Launcher.app\"")
+        except Exception as exc:  # noqa: BLE001
+            add(f"quarantine     : could not read ({exc})")
+
+    try:
+        found = newest_release(fetch_releases())
+        if found is None:
+            add("latest release : none published")
+        else:
+            current = version_tuple(APP_VERSION)
+            newer = bool(current) and found["version"] > current
+            add(f"latest release : {found['label']} ({'newer than this build' if newer else 'same or older'})")
+            add(f"                 {found['url']}")
+    except Exception as exc:  # noqa: BLE001 - offline is a normal answer here
+        add(f"latest release : check failed ({exc})")
+
+    return lines
+
+
+def diagnose():
+    text = "\n".join(collect_diagnostics())
+    print(text)
+
+    target = pathlib.Path.home() / "Desktop"
+    if not target.is_dir():
+        target = pathlib.Path(tempfile.gettempdir())
+    path = target / "rickroll-diagnose.txt"
+    try:
+        path.write_text(text + "\n", encoding="utf-8")
+        print(f"\nSaved a copy to {path}")
+    except Exception as exc:  # noqa: BLE001
+        print(f"\nCould not save a copy: {exc}")
+    return 0
 
 
 class FlatButton(tk.Frame):
@@ -624,11 +727,14 @@ def selftest():
 
 
 def main():
+    if "--diagnose" in sys.argv:
+        return diagnose()
     if "--selftest" in sys.argv:
         selftest()
-        return
+        return 0
     Launcher().mainloop()
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

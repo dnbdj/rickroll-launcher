@@ -32,6 +32,12 @@ The app is `rickroll_mac_gui.py` on Python 3 + tkinter, wrapped by a small launc
 
 It carries the same update check as Windows: on launch it asks GitHub for the newest release, shows your version and whether it is newer, and turns the button into a link to that release when one is available. The check runs off the main thread, so a slow or missing network never freezes the window.
 
+If the launcher window ends up buried under eight browser windows, double-click **Force Stop.command** — it sits next to the app in the zip and closes the prank without hunting for the window.
+
+And if nothing happens when you open the app, `--diagnose` writes a report to your Desktop explaining why: macOS and Python versions, whether the bundle's files are executable, which browsers it found, whether the download is still quarantined, and whether GitHub has a newer release.
+
+    python3 "Rickroll Launcher.app/Contents/Resources/rickroll_mac_gui.py" --diagnose
+
 macOS has no public API for creating Spaces, so the Mac build cannot spread windows across desktops — they open on the Space you are on. It has also not been run on real Mac hardware yet.
 
 ## Stopping it
@@ -39,6 +45,6 @@ macOS has no public API for creating Spaces, so the Mac build cannot spread wind
 | Platform | How |
 | --- | --- |
 | Windows | `Ctrl+Alt+Q`, the **Force stop** button, or `Stop-Rickroll.cmd` |
-| macOS | the **Force stop** button, closing the window, or `bash stop-rickroll-mac.sh` |
+| macOS | the **Force stop** button, closing the window, the **Force Stop.command** in the zip, or `bash stop-rickroll-mac.sh` |
 
 Every window runs under a throwaway browser profile in the temp folder, which is how the stop commands close exactly the prank windows and never your real browsing session. Desktops created by the prank are removed on stop unless you tick *Keep desktops on stop*.
