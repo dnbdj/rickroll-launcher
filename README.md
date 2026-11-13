@@ -30,6 +30,8 @@ The Mac download is a real app bundle: unzip it, double-click **Rickroll Launche
 
 The app is `rickroll_mac_gui.py` on Python 3 + tkinter, wrapped by a small launcher that finds a usable Python and falls back to the terminal version if there isn't one. `rickroll-mac.sh` is that terminal version.
 
+It is the same four-page launcher as Windows — **Prank**, **Logs** (with the All/App/Prank/Errors channels), **Leaderboard** and **Updates** — in a sidebar instead of tabs.
+
 It carries the same update check as Windows: on launch it asks GitHub for the newest release, shows your version and whether it is newer, and turns the button into a link to that release when one is available. The check runs off the main thread, so a slow or missing network never freezes the window.
 
 It keeps the same local leaderboard too — runs, best run, longest run, windows opened and the last run — saved in `~/Library/Application Support/Rickroll Launcher/leaderboard.json`, with a Reset button to clear it.

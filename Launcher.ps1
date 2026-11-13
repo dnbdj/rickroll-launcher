@@ -94,7 +94,7 @@ $script:G = @{
     Caret  = [string][char]0x25BE
 }
 
-$script:AppVersion = '1.0.5'
+$script:AppVersion = '1.0.6'
 
 # -------------------------------------------------------------------- widgets
 

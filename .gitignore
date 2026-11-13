@@ -12,3 +12,4 @@ leaderboard.json
 __pycache__/
 *.pyc
 dist/
+screenshots/
