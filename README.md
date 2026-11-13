@@ -32,6 +32,8 @@ The app is `rickroll_mac_gui.py` on Python 3 + tkinter, wrapped by a small launc
 
 It carries the same update check as Windows: on launch it asks GitHub for the newest release, shows your version and whether it is newer, and turns the button into a link to that release when one is available. The check runs off the main thread, so a slow or missing network never freezes the window.
 
+It keeps the same local leaderboard too — runs, best run, longest run, windows opened and the last run — saved in `~/Library/Application Support/Rickroll Launcher/leaderboard.json`.
+
 If the launcher window ends up buried under eight browser windows, double-click **Force Stop.command** — it sits next to the app in the zip and closes the prank without hunting for the window.
 
 And if nothing happens when you open the app, `--diagnose` writes a report to your Desktop explaining why: macOS and Python versions, whether the bundle's files are executable, which browsers it found, whether the download is still quarantined, and whether GitHub has a newer release.

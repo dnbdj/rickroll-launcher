@@ -32,8 +32,11 @@ import time
 import tkinter as tk
 from urllib.request import Request, urlopen
 
-APP_VERSION = "1.0.3"
+APP_VERSION = "1.0.4"
 RELEASES_URL = "https://api.github.com/repos/dnbdj/rickroll-launcher/releases"
+
+# The selftest points this at a temp file so it never touches real stats.
+_STATS_OVERRIDE = {"path": None}
 VIDEO_URL = "https://www.youtube.com/watch?v=dQw4w9WgXcQ&autoplay=1"
 
 BROWSER_PATHS = [
@@ -59,6 +62,31 @@ DANGER_BG = "#2A1B22"
 
 FONT = "Helvetica Neue"
 STEP_DELAY_MS = 800
+
+
+def stats_file():
+    """Where the leaderboard lives. Not next to the app: the bundle is replaced
+    on update, and Application Support is where a Mac app is expected to write.
+    """
+    if _STATS_OVERRIDE["path"]:
+        return pathlib.Path(_STATS_OVERRIDE["path"])
+    if sys.platform == "darwin":
+        base = pathlib.Path.home() / "Library" / "Application Support" / "Rickroll Launcher"
+    else:
+        base = pathlib.Path.home() / ".rickroll-launcher"
+    return base / "leaderboard.json"
+
+
+def format_duration(seconds):
+    if seconds <= 0:
+        return "0s"
+    if seconds < 60:
+        return f"{seconds}s"
+    minutes, rest = divmod(int(seconds), 60)
+    if minutes < 60:
+        return f"{minutes}m {rest:02d}s"
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours}h {minutes:02d}m"
 
 
 def version_tuple(text):
@@ -177,6 +205,12 @@ def collect_diagnostics():
                 add("                 or clear it with: xattr -dr com.apple.quarantine \"Rickroll Launcher.app\"")
         except Exception as exc:  # noqa: BLE001
             add(f"quarantine     : could not read ({exc})")
+
+    try:
+        runs = json.loads(stats_file().read_text(encoding="utf-8")).get("Runs") or []
+        add(f"leaderboard    : {len(runs)} run(s) at {stats_file()}")
+    except (OSError, ValueError):
+        add(f"leaderboard    : no runs saved yet ({stats_file()})")
 
     try:
         found = newest_release(fetch_releases())
@@ -322,6 +356,8 @@ class Launcher(tk.Tk):
         self.browser = None
         self.procs = []
         self.job = None
+        self.started_at = None
+        self.runs = []
         self.update_state = "idle"
         self.update_info = None  # not "update": that name is tkinter's own method
         self._update_result = None
@@ -332,6 +368,8 @@ class Launcher(tk.Tk):
         self.log("Launcher ready.", "quiet")
         self.log(f"Prank profile: {self.profile_dir}", "quiet")
         self.log("Panic stop: press Force stop. Closing this window also cleans up.", "quiet")
+        self.runs = self._load_runs()
+        self._render_stats()
         if auto_check:
             self.after(600, lambda: self._check_updates(auto=True))
 
@@ -368,6 +406,23 @@ class Launcher(tk.Tk):
             anchor="w",
         )
         hint.pack(fill="x", padx=24, pady=(0, 10))
+
+        stats_card = tk.Frame(self, bg=CARD, highlightbackground=STROKE, highlightthickness=1)
+        stats_card.pack(fill="x", padx=22, pady=(0, 10))
+        stats_inner = tk.Frame(stats_card, bg=CARD)
+        stats_inner.pack(fill="x", padx=16, pady=10)
+
+        self.stat_values = {}
+        for key, caption in (("Runs", "RUNS"), ("Best", "BEST RUN"), ("Longest", "LONGEST"), ("Windows", "OPENED")):
+            column = tk.Frame(stats_inner, bg=CARD)
+            column.pack(side="left", padx=(0, 26))
+            tk.Label(column, text=caption, bg=CARD, fg=MUTED, font=(FONT, 8)).pack(anchor="w")
+            value = tk.Label(column, text="-", bg=CARD, fg=TEXT, font=(FONT, 13, "bold"))
+            value.pack(anchor="w")
+            self.stat_values[key] = value
+
+        self.recent_label = tk.Label(stats_inner, text="", bg=CARD, fg=MUTED, font=(FONT, 9), anchor="e", justify="right")
+        self.recent_label.pack(side="right", padx=(8, 0))
 
         log_card = tk.Frame(self, bg=CARD, highlightbackground=STROKE, highlightthickness=1)
         log_card.pack(fill="both", expand=True, padx=22, pady=(0, 10))
@@ -427,6 +482,56 @@ class Launcher(tk.Tk):
             self.log(f"Plan: {windows} window(s), auto-stop after {seconds}s.", "quiet")
         else:
             self.log(f"Plan: {windows} window(s), runs until stopped.", "quiet")
+
+    # ---------------------------------------------------------- leaderboard
+
+    def _load_runs(self):
+        try:
+            data = json.loads(stats_file().read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return []
+        runs = data.get("Runs") if isinstance(data, dict) else None
+        return [run for run in (runs or []) if isinstance(run, dict)]
+
+    def _save_runs(self, runs):
+        path = stats_file()
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps({"Runs": runs[:50]}, indent=2), encoding="utf-8")
+        except OSError as exc:
+            self.log(f"Could not save the leaderboard: {exc}", "warn")
+
+    def _record_run(self, seconds, forced):
+        if self.opened <= 0 and seconds <= 0:
+            return
+        runs = self._load_runs()
+        runs.insert(0, {
+            "At": time.strftime("%Y-%m-%d %H:%M"),
+            "Windows": int(self.opened),
+            "Seconds": int(seconds),
+            "Forced": bool(forced),
+        })
+        self._save_runs(runs)
+        self.runs = runs[:50]
+        self._render_stats()
+
+    def _render_stats(self):
+        best = max((int(run.get("Windows", 0)) for run in self.runs), default=0)
+        longest = max((int(run.get("Seconds", 0)) for run in self.runs), default=0)
+        total = sum(int(run.get("Windows", 0)) for run in self.runs)
+
+        self.stat_values["Runs"].configure(text=str(len(self.runs)))
+        self.stat_values["Best"].configure(text=str(best))
+        self.stat_values["Longest"].configure(text=format_duration(longest))
+        self.stat_values["Windows"].configure(text=str(total))
+
+        if self.runs:
+            last = self.runs[0]
+            self.recent_label.configure(
+                text=f"Last: {int(last.get('Windows', 0))} windows \u00b7 {format_duration(int(last.get('Seconds', 0)))}\n{last.get('At', '')}"
+            )
+        else:
+            self.recent_label.configure(text="No runs yet - stop\nthe prank and it lands here.")
 
     # -------------------------------------------------------------- updates
 
@@ -547,6 +652,7 @@ class Launcher(tk.Tk):
         self.opened = 0
         self.procs = []
         self.ends_at = None
+        self.started_at = time.time()
         self.running = True
         os.makedirs(self.profile_dir, exist_ok=True)
 
@@ -625,6 +731,12 @@ class Launcher(tk.Tk):
             self.log(f"Closed {closed} window process(es).", "ok")
         else:
             self.log("No prank windows were open.", "quiet")
+
+        if was_running:
+            elapsed = 0 if self.started_at is None else int(round(time.time() - self.started_at))
+            self._record_run(elapsed, force)
+            self.log(f"Leaderboard: {self.opened} window(s) in {format_duration(elapsed)}.", "quiet")
+        self.started_at = None
 
         shutil.rmtree(self.profile_dir, ignore_errors=True)
         self.procs = []
@@ -717,6 +829,30 @@ def selftest():
     print(f"selftest: failure -> state={app.update_state} footer='{app.version_label.cget('text')}' enabled={app.update_button._enabled}")
     app._finish_update_check(None, None)
     print(f"selftest: no releases -> state={app.update_state} footer='{app.version_label.cget('text')}'")
+
+    stats_tmp = pathlib.Path(tempfile.gettempdir()) / "rickroll-selftest-leaderboard.json"
+    if stats_tmp.exists():
+        stats_tmp.unlink()
+    _STATS_OVERRIDE["path"] = str(stats_tmp)
+
+    app.runs = []
+    app._render_stats()
+    print(f"selftest: leaderboard empty -> runs={app.stat_values['Runs'].cget('text')} recent='{app.recent_label.cget('text').splitlines()[0]}'")
+
+    app.opened = 12
+    app._record_run(95, False)
+    app.opened = 8
+    app._record_run(300, True)
+    print(f"selftest: leaderboard -> runs={app.stat_values['Runs'].cget('text')} best={app.stat_values['Best'].cget('text')} longest={app.stat_values['Longest'].cget('text')} opened={app.stat_values['Windows'].cget('text')}")
+
+    app.runs = []
+    app.runs = app._load_runs()
+    print(f"selftest: leaderboard reload -> runs={len(app.runs)} newest={app.runs[0]['Windows']} forced={app.runs[0]['Forced']} at={app.runs[0]['At']}")
+
+    stats_tmp.unlink(missing_ok=True)
+    _STATS_OVERRIDE["path"] = None
+    app.runs = []
+    app._render_stats()
 
     app.after(1200, app.destroy)
     app.mainloop()
